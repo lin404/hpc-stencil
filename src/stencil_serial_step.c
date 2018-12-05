@@ -4,6 +4,7 @@
 
 // Define output file name
 #define OUTPUT_FILE "stencil.pgm"
+#define MIN(a,b) (((a)<(b))?(a):(b))
 
 void stencil(const int nx, const int ny, float *  image, float *  tmp_image);
 void init_image(const int nx, const int ny, float *  image, float *  tmp_image);
@@ -49,9 +50,10 @@ int main(int argc, char *argv[]) {
 
 void stencil(const int nx, const int ny, float * restrict image, float * restrict tmp_image) {
   #pragma ivdep
-  for (int j = 1; j < ny-1; ++j) {
-    #pragma ivdep
-    for (int i = 1; i < nx-1; ++i) {
+  for (int y = 1; y < ny-1; y+=1024) {
+  for (int x = 1; x < nx-1; x+=1024) {
+  for (int j = y; j < MIN(y+1024,ny-1); ++j) {
+    for (int i = x; i < MIN(x+1024,nx-1); ++i) {
       tmp_image[i+j*nx] = image[i+j*nx] * 3.0f/5.0f
         + image[i  +(j-1)*nx] * 0.5f/5.0f // TOP
         + image[i  +(j+1)*nx] * 0.5f/5.0f // BELOW
@@ -59,6 +61,7 @@ void stencil(const int nx, const int ny, float * restrict image, float * restric
         + image[i+1+j*nx] * 0.5f/5.0f; // RIGHT
     }
   }
+  }}
 
   #pragma ivdep
   for (int i = 1; i < nx-1; ++i) {
