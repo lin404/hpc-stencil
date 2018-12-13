@@ -9,7 +9,6 @@
 
 void stencil(int rank, int size, const int local_ncols, const int local_nrows, float **  image, float **  tmp_image);
 void init_image(int rank, int size, const int nx, const int ny, float **  image);
-void output_image(const char * file_name, const int nx, const int ny, float **image);
 double wtime(void);
 
 int calc_nrows_from_rank(int NCOWS, int rank, int size);
@@ -27,32 +26,27 @@ int main(int argc, char *argv[]) {
   int ny = atoi(argv[2]);
   int niters = atoi(argv[3]);
 
-  // Allocate the image
-  // float *image = malloc(sizeof(float)*nx*ny);
-  // float *tmp_image = malloc(sizeof(float)*nx*ny);
-
-  int i,j;             /* row and column indices for the grid */
+  int i,j;                /* row and column indices for the grid */
   int kk;                /* index for looping over ranks */
-  int start_col,end_col; /* rank dependent looping indices */
   int rank;              /* the rank of this process */
   int size;              /* number of processes in the communicator */
   int tag = 0;           /* scope for adding extra information to a message */
-  int tag1 = 1;           /* scope for adding extra information to a message */
-  MPI_Status status;     /* struct used by MPI_Recv */
-  MPI_File file_handle;    /* parallel file handle */ 
-  MPI_Request request;     /* request for action used by async functions */ 
-  int local_nrows;       /* number of rows apportioned to this rank */
-  int local_ncols;       /* number of columns apportioned to this rank */
-  int master_nrows;      /* number of columns apportioned to a remote rank */
-  int remote_nrows;      /* number of columns apportioned to a remote rank */
-  double boundary_mean;  /* mean of boundary values used to initialise inner cells */
-  float **tmp_image;            /* local temperature grid at time t - 1 */
-  float **image;            /* local temperature grid at time t     */
-  float *printbuf;      /* buffer to hold values for printing */
+  int tag1 = 1;           
+  MPI_Status status;      /* struct used by MPI_Recv */
+  MPI_Request request;    /* request for action used by async functions */ 
+  int local_nrows;        /* number of rows apportioned to this rank */
+  int local_ncols;        /* number of columns apportioned to this rank */
+  int master_nrows;       /* number of columns apportioned to a remote rank */
+  int remote_nrows;       /* number of columns apportioned to a remote rank */
+  double boundary_mean;   /* mean of boundary values used to initialise inner cells */
+  float **tmp_image;      /* local temperature grid at time t - 1 */
+  float **image;          /* local temperature grid at time t     */
+  float *printbuf;        /* buffer to hold values for printing */
 
-  int t;              /* index for timestep iterations */
-  double maximum = 100.0;
+  int t;                  /* index for timestep iterations */
+  double maximum = 0.0;
   double local_maximum = 0.0;
+
   /* MPI_Init returns once it has started up processes */
   /* get size and rank */ 
   MPI_Init( &argc, &argv );
@@ -66,12 +60,7 @@ int main(int argc, char *argv[]) {
   local_nrows = calc_nrows_from_rank(ny, rank, size);
   local_ncols = nx;
 
-  /*
-  ** allocate space for:
-  ** - the local grid (2 extra columns added for the halos)
-  ** - we'll use local grids for current and previous timesteps
-  ** - buffers for message passing
-  */
+  // Allocate the image
   tmp_image = (float**)malloc(sizeof(float*) * (local_nrows + 2));
   for(i=0;i<local_nrows + 2;i++) {
     tmp_image[i] = (float*)malloc(sizeof(float) * local_ncols);
@@ -81,14 +70,17 @@ int main(int argc, char *argv[]) {
     image[i] = (float*)malloc(sizeof(float) * local_ncols);
   }
 
+  for(i=0;i<local_nrows + 2;i++) {
+    for(j=0;j<local_ncols;j++) {
+      tmp_image[i][j] == 0.0f;
+      image[i][j]==0.0f;
+    }
+  } 
+
   /* The last rank has the most columns apportioned.
      printbuf must be big enough to hold this number */
   remote_nrows = calc_nrows_from_rank(nx, size-1, size); 
   printbuf = (float*)malloc(sizeof(float) * ((local_ncols)));
-  // printbuf = (float**)malloc(sizeof(float*) * (remote_nrows + 2));
-  // for(i = 0;i < remote_nrows+2; i ++) {
-  //   printbuf[i] = (float*)malloc(sizeof(float) * local_ncols);
-  // }
 
   // Set the input image
   init_image(rank, size, local_ncols, local_nrows, image);
@@ -106,6 +98,7 @@ int main(int argc, char *argv[]) {
   printf(" runtime: %lf s\n", toc-tic);
   printf("------------------------------------\n");
 
+  // Output the image
   if(rank == MASTER){
     // Open output file
     FILE *fp = fopen(OUTPUT_FILE, "w");
@@ -118,39 +111,27 @@ int main(int argc, char *argv[]) {
     fprintf(fp, "P5 %d %d 255\n", nx, ny);
 
     // find the maximum
-    // for (j = 1; j < local_nrows+1; ++j) {
-    //   for (i = 0; i < local_ncols; ++i) {
-    //     if (image[j][i] > maximum)
-    //       maximum = image[j][i];
-    //   }
-    // }
-    // printf("maximum Master: %d \n", maximum);
+    for (j = 1; j < local_nrows+1; ++j) {
+      for (i = 0; i < local_ncols; ++i) {
+        if (image[j][i] > maximum)
+          maximum = image[j][i];
+      }
+    }
 
-    // for(kk=1;kk<size;kk++) {
-    //   MPI_Recv(&local_maximum,1,MPI_DOUBLE,kk,tag1,MPI_COMM_WORLD,&status);
-    //   // printf("local_maximum: %d \n", local_maximum);
-    //   if (local_maximum > maximum)
-    //       maximum = local_maximum;
-    // }
-    // printf("final maximum: %d \n", maximum);
+    for(kk=1;kk<size;kk++) {
+      MPI_Recv(&local_maximum,1,MPI_DOUBLE,kk,tag1,MPI_COMM_WORLD,&status);
+      if (local_maximum > maximum)
+          maximum = local_maximum;
+    }
 
-
-
+    // Printout rank master
     for(j=1;j<=local_nrows;++j) {
       for (i = 0; i < local_ncols; ++i) {
-        // printf("local_rows: %d, image.j %d \n", local_nrows, j);
         fputc((char)(255.0*image[j][i]/maximum), fp);
       }
     }
-    // for(kk=1;kk<size;kk++) {
-    //   for (j = 1; j <=local_nrows; ++j)
-    //   {
-    //     for (i = 0; i < local_ncols; ++i) {
-    //       fputc((char)(255), fp);
-    //     }
-    //   }
-    // }
     
+    // Printout other ranks
     for(kk=1;kk<size;kk++) {
       for(j = 1; j < local_nrows+1; ++j) {
         MPI_Recv(printbuf,local_ncols,MPI_FLOAT,kk,j,MPI_COMM_WORLD,&status);
@@ -158,40 +139,24 @@ int main(int argc, char *argv[]) {
           fputc((char)(255.0*printbuf[i]/maximum), fp);
         }
       }
-
-      // if(kk == size -1){
-      //   for(j = 1; j < remote_nrows+1; j++) {
-      //     for (i = 0; i < local_ncols; ++i) {
-      //       fputc((char)(255.0*printbuf[j][i]/maximum), fp);
-      //     }
-      //   }
-      // } else {
-        // for(j = 1; j < local_nrows+1; ++j) {
-        //   for (i = 0; i < local_ncols; ++i) {
-        //     fputc((char)(255.0*printbuf[j][i]/maximum), fp);
-        //   }
-        // }
-      // }
     }
 
     // Close the file
     fclose(fp);
-    // printf("over print \n");
+
   }else {
-    // for (j = 1; j < local_nrows+1; ++j) {
-    //   for (i = 0; i < local_ncols; ++i) {
-    //     if (image[j][i] > local_maximum)
-    //       local_maximum = image[j][i];
-    //   }
-    // }
-    // printf("Rank: %d , local_maximum: %d \n", rank ,local_maximum);
-    // MPI_Send(&local_maximum,1,MPI_DOUBLE,MASTER,tag1,MPI_COMM_WORLD);
+    for (j = 1; j < local_nrows+1; ++j) {
+      for (i = 0; i < local_ncols; ++i) {
+        if (image[j][i] > local_maximum)
+          local_maximum = image[j][i];
+      }
+    }
+    MPI_Send(&local_maximum,1,MPI_DOUBLE,MASTER,tag1,MPI_COMM_WORLD);
     for(j = 1; j < local_nrows+1; ++j) {
       MPI_Send(image[j],local_ncols,MPI_FLOAT,MASTER,j,MPI_COMM_WORLD);
     }
   } 
 
-  /* don't forget to tidy up when we're done */
   MPI_Finalize();
 
   /* free up allocated memory */
@@ -206,7 +171,6 @@ int main(int argc, char *argv[]) {
   // free(tmp_image);
   // free(image);
   // free(printbuf);
-  // free(&local_maximum);
 
   /* and exit the program */
   return EXIT_SUCCESS;
@@ -238,8 +202,11 @@ void stencil(int rank, int size, const int local_ncols, const int local_nrows, f
 		recvbuf, local_ncols, MPI_FLOAT, right, tag,
 		MPI_COMM_WORLD, &status);
   }
-  for(i=0;i<local_ncols;i++){
-    image[local_nrows+1][i] = recvbuf[i];
+  
+  if(rank!=size-1){
+    for(i=0;i<local_ncols;i++){
+      image[local_nrows+1][i] = recvbuf[i];
+    }
   }
 
   /* send to the right, receive from left */
@@ -249,118 +216,34 @@ void stencil(int rank, int size, const int local_ncols, const int local_nrows, f
 		recvbuf, local_ncols, MPI_FLOAT, left, tag,
 		MPI_COMM_WORLD, &status);
   }
-  for(i=0;i<local_ncols;i++){
-    image[0][i] = recvbuf[i];
+  if(rank!=MASTER){
+    for(i=0;i<local_ncols;i++){
+      image[0][i] = recvbuf[i];
+    }
   }
 
-  if(rank==MASTER) {
-    for (j = 2; j < local_nrows+1; ++j) {
-      for (i = 1; i < local_ncols-1; ++i) {
-        tmp_image[j][i] = image[j][i] * 3.0f/5.0f
-          + image[j-1][i] * 0.5f/5.0f // TOP
-          + image[j+1][i] * 0.5f/5.0f // BELOW
-          + image[j][i-1] * 0.5f/5.0f // LEFT
-          + image[j][i+1] * 0.5f/5.0f; // RIGHT
-      }
-    }
-
+  for (j = 1; j < local_nrows+1; ++j) {
     for (i = 1; i < local_ncols-1; ++i) {
-      // FIRST row
-      tmp_image[1][i] = image[1][i] * 3.0f/5.0f
-        + image[2][i] * 0.5f/5.0f // BELOW
-        + image[1][i-1] * 0.5f/5.0f // LEFT
-        + image[1][i+1] * 0.5f/5.0f; // RIGHT
-    }
-
-    for (i = 2; i < local_nrows+1; ++i) {
-      // FIRST column
-      tmp_image[i][0] = image[i][0] * 3.0f/5.0f
-        + image[i-1][0] * 0.5f/5.0f // TOP
-        + image[i+1][0] * 0.5f/5.0f // BELOW
-        + image[i][1] * 0.5f/5.0f; // RIGHT
-      // LAST column
-      tmp_image[i][local_ncols-1] = image[i][local_ncols-1] * 3.0f/5.0f
-        + image[i-1][local_ncols-1] * 0.5f/5.0f // TOP
-        + image[i+1][local_ncols-1] * 0.5f/5.0f // BELOW
-        + image[i][local_ncols-2] * 0.5f/5.0f; // LEFT
-    }
-
-    // TOP-LEFT corner
-    tmp_image[1][0] = image[1][0] * 3.0f/5.0f
-      + image[2][0] * 0.5f/5.0f // BELOW
-      + image[1][1] * 0.5f/5.0f; // RIGHT
-  
-    // TOP-RIGHT corner
-    tmp_image[1][local_ncols-1] = image[1][local_ncols-1] * 3.0f/5.0f
-      + image[2][local_ncols-1] * 0.5f/5.0f // BELOW
-      + image[1][local_ncols-2] * 0.5f/5.0f; // LEFT
-
+      tmp_image[j][i] = image[j][i] * 3.0f/5.0f
+        + image[j-1][i] * 0.5f/5.0f // TOP
+        + image[j+1][i] * 0.5f/5.0f // BELOW
+        + image[j][i-1] * 0.5f/5.0f // LEFT
+        + image[j][i+1] * 0.5f/5.0f; // RIGHT
+      }
   }
-  else if(rank==size-1) {
-    for (j = 1; j < local_nrows; ++j) {
-      for (i = 1; i < local_ncols-1; ++i) {
-        tmp_image[j][i] = image[j][i] * 3.0f/5.0f
-          + image[j-1][i] * 0.5f/5.0f // TOP
-          + image[j+1][i] * 0.5f/5.0f // BELOW
-          + image[j][i-1] * 0.5f/5.0f // LEFT
-          + image[j][i+1] * 0.5f/5.0f; // RIGHT
-      }
-    }
 
-    for (i = 1; i < local_ncols-1; ++i) {
-      // LAST row
-      tmp_image[local_nrows][i] = image[local_nrows][i] * 3.0f/5.0f
-        + image[local_nrows-1][i] * 0.5f/5.0f // TOP
-        + image[local_nrows][i-1] * 0.5f/5.0f // LEFT
-        + image[local_nrows][i+1] * 0.5f/5.0f; // RIGHT
-    }
-
-    for (i = 1; i < local_nrows; ++i) {
-      // FIRST column
-      tmp_image[i][0] = image[i][0] * 3.0f/5.0f
-        + image[i-1][0] * 0.5f/5.0f // TOP
-        + image[i+1][0] * 0.5f/5.0f // BELOW
-        + image[i][1] * 0.5f/5.0f; // RIGHT
-      // LAST column
-      tmp_image[i][local_ncols-1] = image[i][local_ncols-1] * 3.0f/5.0f
-        + image[i-1][local_ncols-1] * 0.5f/5.0f // TOP
-        + image[i+1][local_ncols-1] * 0.5f/5.0f // BELOW
-        + image[i][local_ncols-2] * 0.5f/5.0f; // LEFT
-    }
-
-    // BELOW-LEFT corner
-    tmp_image[local_nrows][0] = image[local_nrows][0] * 3.0f/5.0f
-      + image[local_nrows-1][0] * 0.5f/5.0f // TOP
-      + image[local_nrows][1] * 0.5f/5.0f; // RIGHT
+  for (i = 1; i < local_nrows+1; ++i) {
+    // FIRST column
+    tmp_image[i][0] = image[i][0] * 3.0f/5.0f
+      + image[i-1][0] * 0.5f/5.0f // TOP
+      + image[i+1][0] * 0.5f/5.0f // BELOW
+      + image[i][1] * 0.5f/5.0f; // RIGHT
     
-    // BELOW-RIGHT corner
-    tmp_image[local_nrows][local_ncols-1] = image[local_nrows][local_ncols-1] * 3.0f/5.0f
-      + image[local_nrows-1][local_ncols-1] * 0.5f/5.0f // TOP
-      + image[local_nrows][local_ncols-2] * 0.5f/5.0f; // LEFT
-  }
-  else {
-    for (j = 1; j < local_nrows+1; ++j) {
-      for (i = 1; i < local_ncols-1; ++i) {
-        tmp_image[j][i] = image[j][i] * 3.0f/5.0f
-          + image[j-1][i] * 0.5f/5.0f // TOP
-          + image[j+1][i] * 0.5f/5.0f // BELOW
-          + image[j][i-1] * 0.5f/5.0f // LEFT
-          + image[j][i+1] * 0.5f/5.0f; // RIGHT
-      }
-    }
-
-    for (i = 1; i < local_nrows+1; ++i) {
-      // FIRST column
-      tmp_image[i][0] = image[i][0] * 3.0f/5.0f
-        + image[i-1][0] * 0.5f/5.0f // TOP
-        + image[i+1][0] * 0.5f/5.0f // BELOW
-        + image[i][1] * 0.5f/5.0f; // RIGHT
-      // LAST column
-      tmp_image[i][local_ncols-1] = image[i][local_ncols-1] * 3.0f/5.0f
-        + image[i-1][local_ncols-1] * 0.5f/5.0f // TOP
-        + image[i+1][local_ncols-1] * 0.5f/5.0f // BELOW
-        + image[i][local_ncols-2] * 0.5f/5.0f; // LEFT
-    }
+    // LAST column
+    tmp_image[i][local_ncols-1] = image[i][local_ncols-1] * 3.0f/5.0f
+      + image[i-1][local_ncols-1] * 0.5f/5.0f // TOP
+      + image[i+1][local_ncols-1] * 0.5f/5.0f // BELOW
+      + image[i][local_ncols-2] * 0.5f/5.0f; // LEFT
   }
 
   free(sendbuf);
@@ -381,44 +264,6 @@ void init_image(int rank, int size, const int nx, const int ny, float ** image) 
       }   
     }
   }
-  printf("init_image Rank; %d: first pixel: %f,  last pixel: %f \n", rank, image[1][0], image[ny][0]);
-}
-
-// Routine to output the image in Netpbm grayscale binary image format
-void output_image(const char * file_name, const int nx, const int ny, float ** image) {
-  // int j, i;
-
-//  // Open output file
-//   FILE *fp = fopen(file_name, "w");
-//   if (!fp) {
-//     fprintf(stderr, "Error: Could not open %s\n", OUTPUT_FILE);
-//     exit(EXIT_FAILURE);
-//   }
-
-//   // Ouptut image header
-//   fprintf(fp, "P5 %d %d 255\n", nx, ny);
-
-  // Calculate maximum value of image
-  // This is used to rescale the values
-  // to a range of 0-255 for output
-  // double maximum = 0.0;
-  // for (j = 0; j < ny; ++j) {
-  //   for (i = 0; i < nx; ++i) {
-  //     if (image[j][i] > maximum)
-  //       maximum = image[j][i];
-  //   }
-  // }
-
-  // Output image, converting to numbers 0-255
-  // for (j = 0; j < ny; ++j) {
-  //   for (i = 0; i < nx; ++i) {
-  //     fputc((char)(255.0*image[j][i]/maximum), fp);
-  //   }
-  // }
-
-  // // Close the file
-  // fclose(fp);
-
 }
 
 // Get the current time in seconds since the Epoch
