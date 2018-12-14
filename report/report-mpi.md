@@ -1,8 +1,7 @@
 # MPI Explorations
 
 ## Abstract
-Message Passing Interface (MPI) is widely used in large scale parallel application in science and engineering. Furthermore utilising the concept of data streams in MPI, halo exchange algorithm is popular. This report explained row decomposition model and tile decomposition model for halo exchange, further introduced several functions which can be used for each model in MPI, also pointed that computing performance has been improved by using MPI.
-
+Message passing interface (MPI) is widely used in large scale parallel applications in science and engineering. Apart from implementing the concept of data streams, it makes usage of the popular halo exchange algorithm. In this report, both row and tile decomposition models are addressed and explained for Halo exchange. Furthermore, several MPI functions are introduced for implementing each model, while also pointing out how computing performance is improved by using MPI.
 
 ## Introduction
 MPI - Message Passing Interface is a specification of message passing libraries. It provides several functions which developers can use to specify multiple computers or multiple processor cores within the same computer in order to identify and implement a single parallel program across distributed memory.
@@ -16,10 +15,13 @@ Basic send/receive functions are blocking communication, there is also non-block
 One commonly used communication pattern for domain decomposition problems is halo exchange. Each process computes its own data in core region. At every timestep, the data is exchanged with neighbour processes so that every process has access to the correct information. The processes then use their newly acquired information to update the halo regions for the next computing. For a big calculation of a grid of cells,  decomposing original grid into multiple smaller grids should be considered. Each part is owned by a different process so that each process only stores and calculates fewer data. The gird can be decomposed by columns or rows, or as tiles.
 
 ## Halo Exchange - Decompose by rows
-As a strategy of halo exchange I tried to divide rows of stencil to achieve better performance. I did this instead of starting with dividing columns since I know that row-major order leads to improved performance in computing from my previous assignment.
+As a strategy of halo exchange, I tried to divide rows of the stencil to achieve better performance. I did this instead of starting with dividing columns since I know that row-major order leads to improved performance in computing from my previous assignment.
 
 Decomposing cells of stencil by rows into multiple chunks as shown in Figure_1, each chunk belongs to a different rank. Allocate additional rows at above and bottom of each chunk for computational work, these cells are not updated locally, but provide values when updating the borders of this chunk. To update those cells, every process sends the information of cells in the first row and the last row to the pair of neighbors rank x-1 and x+1, and places the received borders in the halo region from its neighbors.
 In each rank, the cells in the first and last row can be calculated as a 5-point with extended information in the halo region, but the calculation of cells in the first and last column is still 4-point.
+
+As a strategy of halo exchange, I tried to divide rows of the stencil to achieve better performance. I did this instead of starting with dividing columns since I know that row-major order leads to improved performance in computing from my previous assignment.  Decomposing cells of stencil by rows into multiple chunks as shown in Figure_1, each chunk belongs to a different rank. Allocate additional rows at above and bottom of each chunk for computational work, these cells are not updated locally, but provide values when updating the borders of this chunk. To update those cells, every process sends the information of cells in the first row and the last row to the pair of neighbors rank x-1 and x+1, and places the received borders in the halo region from its neighbors. In each rank, the cells in the first and last row can be calculated as a 5-point with extended information in the halo region, but the calculation of cells in the first and last column is still 4-point.
+
 
 ### MPI_Sendrecv
 There are a lot of sending and receiving functions in MPI for exchanging message. I choose to use MPI_Sendrecv, so that the send-receive operations combine in one call the sending of a message to one destination and the receiving of another message from another process. In other words, Instead of using MPI_Irecv, MPI_Send and MPI_Wait, MPI_Sendrecv is more convenient.
