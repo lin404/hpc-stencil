@@ -203,6 +203,7 @@ int accelerate_flow(const t_param params, t_speed* cells, int* obstacles)
   /* modify the 2nd row of the grid */
   int jj = params.ny - 2;
 
+  #pragma omp parallel for schedule(static)
   for (int ii = 0; ii < params.nx; ii++)
   {
     /* if the cell is not occupied and
@@ -230,7 +231,7 @@ int propagate(const t_param params, t_speed* cells, t_speed* tmp_cells)
   /* loop over _all_ cells */
   #pragma omp parallel
   {
-  #pragma omp for
+  #pragma omp for schedule(dynamic)
   for (int jj = 0; jj < params.ny; jj++)
   {
     #pragma omp simd
@@ -265,7 +266,7 @@ int rebound(const t_param params, t_speed* cells, t_speed* tmp_cells, int* obsta
   /* loop over the cells in the grid */
   #pragma omp parallel
   {
-  #pragma omp for
+  #pragma omp for schedule(dynamic)
   for (int jj = 0; jj < params.ny; jj++)
   {
     #pragma omp simd
