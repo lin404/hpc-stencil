@@ -44,24 +44,21 @@ kernel void accelerate_flow(global t_speed* cells,
 kernel void rebound(global t_speed* cells, 
                     global t_speed* tmp_cells, 
                     global int* obstacles,
-                    global float *partial_sums,
-                          local float* local_sums,
-                    int nx, int ny, int nwork, float omega)
+                    int nx, int ny, float omega,
+                    float density, float accel)
 {  
+
   const float c_sq = 1.f / 3.f; /* square of speed of sound */
   const float w0 = 4.f / 9.f;  /* weighting factor */
   const float w1 = 1.f / 9.f;  /* weighting factor */
   const float w2 = 1.f / 36.f; /* weighting factor */
+  float w3 = density * accel / 9.0;
+  float w4 = density * accel / 36.0;
+
+  int jj_sec = ny - 2;
 
   int ii = get_global_id(0);
   int jj = get_global_id(1);
-  int group_id_x = get_group_id(0);
-  int group_id_y = get_group_id(1);
-
-  int local_ii = get_local_id(0);
-  int local_jj = get_local_id(1);   
-  int work_items_x  = get_local_size(0);
-  int work_items_y  = get_local_size(1);
   
   int y_n = (jj + 1) % ny;
   int x_e = (ii + 1) % nx;
@@ -78,23 +75,32 @@ kernel void rebound(global t_speed* cells,
   Awrk[6] = cells[x_e + y_s*nx].speeds[6];
   Awrk[7] = cells[x_e + y_n*nx].speeds[7];
   Awrk[8] = cells[x_w + y_n*nx].speeds[8];
-  
+
+  barrier(CLK_GLOBAL_MEM_FENCE);
+
   if (obstacles[jj*nx + ii])
   {
-  tmp_cells[ii + jj*nx].speeds[0] = Awrk[0];
-  tmp_cells[ii + jj*nx].speeds[3] = Awrk[1];
-  tmp_cells[ii + jj*nx].speeds[4] = Awrk[2];
-  tmp_cells[ii + jj*nx].speeds[1] = Awrk[3];
-  tmp_cells[ii + jj*nx].speeds[2] = Awrk[4];
-  tmp_cells[ii + jj*nx].speeds[7] = Awrk[5];
-  tmp_cells[ii + jj*nx].speeds[8] = Awrk[6];
-  tmp_cells[ii + jj*nx].speeds[5] = Awrk[7];
-  tmp_cells[ii + jj*nx].speeds[6] = Awrk[8];
-
-  local_sums[local_ii + local_jj * work_items_x] = 0.f;
+    /* called after propagate, so taking values from scratch space
+    ** mirroring, and writing into main grid */
+    cells[ii + jj*nx].speeds[1] = Awrk[3];
+    cells[ii + jj*nx].speeds[2] = Awrk[4];
+    cells[ii + jj*nx].speeds[3] = Awrk[1];
+    cells[ii + jj*nx].speeds[4] = Awrk[2];
+    cells[ii + jj*nx].speeds[5] = Awrk[7];
+    cells[ii + jj*nx].speeds[6] = Awrk[8];
+    cells[ii + jj*nx].speeds[7] = Awrk[5];
+    cells[ii + jj*nx].speeds[8] = Awrk[6];
   } else {
-    float local_density = 0.f;
-    local_density += Awrk[0] + Awrk[1] + Awrk[2] + Awrk[3] + Awrk[4] + Awrk[5] + Awrk[6] + Awrk[7] + Awrk[8];
+        /* compute local density total */
+        float local_density = 0.f;
+
+        /*
+        local_density += Awrk[0]+Awrk[1]+Awrk[2]+Awrk[3]+Awrk[4]+Awrk[5]+Awrk[6]+Awrk[7]+Awrk[8];
+        */
+        for (int kk = 0; kk < NSPEEDS; kk++)
+        {
+          local_density += Awrk[kk];
+        }
 
         /* compute x velocity component */
         float u_x = (Awrk[1] + Awrk[5] + Awrk[8] - (Awrk[3] + Awrk[6] + Awrk[7])) / local_density;
@@ -130,28 +136,61 @@ kernel void rebound(global t_speed* cells,
         d_equ[7] = w2 * local_density * (1.f + u[7] / c_sq + (u[7] * u[7]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
         d_equ[8] = w2 * local_density * (1.f + u[8] / c_sq + (u[8] * u[8]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
 
-        tmp_cells[ii + jj * nx].speeds[0] = Awrk[0] + omega * (d_equ[0] - Awrk[0]);
-        tmp_cells[ii + jj * nx].speeds[1] = Awrk[1] + omega * (d_equ[1] - Awrk[1]);
-        tmp_cells[ii + jj * nx].speeds[2] = Awrk[2] + omega * (d_equ[2] - Awrk[2]);
-        tmp_cells[ii + jj * nx].speeds[3] = Awrk[3] + omega * (d_equ[3] - Awrk[3]);
-        tmp_cells[ii + jj * nx].speeds[4] = Awrk[4] + omega * (d_equ[4] - Awrk[4]);
-        tmp_cells[ii + jj * nx].speeds[5] = Awrk[5] + omega * (d_equ[5] - Awrk[5]);
-        tmp_cells[ii + jj * nx].speeds[6] = Awrk[6] + omega * (d_equ[6] - Awrk[6]);
-        tmp_cells[ii + jj * nx].speeds[7] = Awrk[7] + omega * (d_equ[7] - Awrk[7]);
-        tmp_cells[ii + jj * nx].speeds[8] = Awrk[8] + omega * (d_equ[8] - Awrk[8]);
-
-        local_density = 0.f;
+        /*
+        cells[ii + jj * nx].speeds[0] = Awrk[0] + omega * (d_equ[0] - Awrk[0]);
+        cells[ii + jj * nx].speeds[1] = Awrk[1] + omega * (d_equ[1] - Awrk[1]);
+        cells[ii + jj * nx].speeds[2] = Awrk[2] + omega * (d_equ[2] - Awrk[2]);
+        cells[ii + jj * nx].speeds[3] = Awrk[3] + omega * (d_equ[3] - Awrk[3]);
+        cells[ii + jj * nx].speeds[4] = Awrk[4] + omega * (d_equ[4] - Awrk[4]);
+        cells[ii + jj * nx].speeds[5] = Awrk[5] + omega * (d_equ[5] - Awrk[5]);
+        cells[ii + jj * nx].speeds[6] = Awrk[6] + omega * (d_equ[6] - Awrk[6]);
+        cells[ii + jj * nx].speeds[7] = Awrk[7] + omega * (d_equ[7] - Awrk[7]);
+        cells[ii + jj * nx].speeds[8] = Awrk[8] + omega * (d_equ[8] - Awrk[8]);
+        */
 
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
-          local_density += tmp_cells[ii + jj * nx].speeds[kk];
+          cells[ii + jj * nx].speeds[kk] = Awrk[kk] + omega * (d_equ[kk] - Awrk[kk]);
+        }
+  }
+}
+
+kernel void av_velocity_kernel(global t_speed *cells,
+                              global int *obstacles,
+                              global float *partial_sums,
+                              local float* local_sums,
+                              int nx, int ny)
+{
+
+  int ii = get_global_id(0);
+  int jj = get_global_id(1);
+  
+  int group_id_x = get_group_id(0);
+  int group_id_y = get_group_id(1);
+
+  int local_ii = get_local_id(0);
+  int local_jj = get_local_id(1);   
+
+  int work_items_x  = get_local_size(0);
+  int work_items_y  = get_local_size(1);
+
+  barrier(CLK_LOCAL_MEM_FENCE);
+   if (!obstacles[ii + jj * nx])
+      {   
+        float local_density = 0.f;
+
+        for (int kk = 0; kk < NSPEEDS; kk++)
+        {
+          local_density += cells[ii + jj * nx].speeds[kk];
         }
 
-        u_x = (tmp_cells[ii + jj * nx].speeds[1] + tmp_cells[ii + jj * nx].speeds[5] + tmp_cells[ii + jj * nx].speeds[8] - (tmp_cells[ii + jj * nx].speeds[3] + tmp_cells[ii + jj * nx].speeds[6] + tmp_cells[ii + jj * nx].speeds[7])) / local_density;
-        u_y = (tmp_cells[ii + jj * nx].speeds[2] + tmp_cells[ii + jj * nx].speeds[5] + tmp_cells[ii + jj * nx].speeds[6] - (tmp_cells[ii + jj * nx].speeds[4] + tmp_cells[ii + jj * nx].speeds[7] + tmp_cells[ii + jj * nx].speeds[8])) / local_density;
+        float u_x = (cells[ii + jj * nx].speeds[1] + cells[ii + jj * nx].speeds[5] + cells[ii + jj * nx].speeds[8] - (cells[ii + jj * nx].speeds[3] + cells[ii + jj * nx].speeds[6] + cells[ii + jj * nx].speeds[7])) / local_density;
+        float u_y = (cells[ii + jj * nx].speeds[2] + cells[ii + jj * nx].speeds[5] + cells[ii + jj * nx].speeds[6] - (cells[ii + jj * nx].speeds[4] + cells[ii + jj * nx].speeds[7] + cells[ii + jj * nx].speeds[8])) / local_density;
         
         local_sums[local_ii + local_jj * work_items_x] = sqrt((u_x * u_x) + (u_y * u_y));
-  }
+      } else {
+        local_sums[local_ii + local_jj * work_items_x] = 0.f;
+      }
 
   barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -167,7 +206,6 @@ kernel void rebound(global t_speed* cells,
             sum += local_sums[i+j*work_items_x];             
           } 
       }                                      
-      partial_sums[group_id_x+ group_id_y*nwork] = sum;
+      partial_sums[group_id_x+ group_id_y*8] = sum;
    }
-
 }

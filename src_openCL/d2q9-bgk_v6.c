@@ -211,9 +211,18 @@ int main(int argc, char *argv[])
 
   for (int tt = 0; tt < params.maxIters; tt++)
   {
-
-    accelerate_flow(params, cells, obstacles, ocl, 0);
-    av_vels[tt] = rebound(params, cells, tmp_cells, obstacles, ocl, 0) / (float)*tot_cells;
+    if (tt % 2 == 0)
+    {
+      accelerate_flow(params, cells, obstacles, ocl, 0);
+      av_vels[tt] = rebound(params, cells, tmp_cells, obstacles, ocl, 0) / (float)*tot_cells;
+      // av_vels[tt] = av_velocity_kernel(params, tmp_cells, obstacles, ocl, 0) / (float)*tot_cells;
+    }
+    else
+    {
+      accelerate_flow(params, cells, obstacles, ocl, 1);
+      av_vels[tt] = rebound(params, cells, tmp_cells, obstacles, ocl, 1) / (float)*tot_cells;
+      // av_vels[tt] = av_velocity_kernel(params, tmp_cells, obstacles, ocl, 1) / (float)*tot_cells;
+    }
 
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
@@ -222,7 +231,7 @@ int main(int argc, char *argv[])
 #endif
   }
   err = clEnqueueReadBuffer(
-      ocl.queue, ocl.cells, CL_TRUE, 0,
+      ocl.queue, ocl.tmp_cells, CL_TRUE, 0,
       sizeof(t_speed) * params.nx * params.ny, cells, 0, NULL, NULL);
   checkError(err, "reading cells data", __LINE__);
 
@@ -273,6 +282,15 @@ int accelerate_flow(const t_param params, t_speed *cells, int *obstacles, t_ocl 
 {
   cl_int err;
 
+  // Set kernel arguments
+  // if (flg == 0)
+  // {
+  //   err = clSetKernelArg(ocl.accelerate_flow, 0, sizeof(cl_mem), &ocl.cells);
+  // }
+  // else
+  // {
+  //   err = clSetKernelArg(ocl.accelerate_flow, 0, sizeof(cl_mem), &ocl.tmp_cells);
+  // }
   err = clSetKernelArg(ocl.accelerate_flow, 0, sizeof(cl_mem), &ocl.cells);
   checkError(err, "setting accelerate_flow arg 0", __LINE__);
   err = clSetKernelArg(ocl.accelerate_flow, 1, sizeof(cl_mem), &ocl.obstacles);
@@ -309,6 +327,21 @@ float rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obs
   for (int i = 0; i < nwork_groups; ++i)
     tot_u[i] = 0.0f;
 
+  // Set kernel arguments
+  // if (flg == 0)
+  // {
+  //   err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.cells);
+  //   checkError(err, "setting rebound arg 0", __LINE__);
+  //   err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.tmp_cells);
+  //   checkError(err, "setting rebound arg 1", __LINE__);
+  // }
+  // else
+  // {
+  //   err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.tmp_cells);
+  //   checkError(err, "setting rebound arg 0", __LINE__);
+  //   err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.cells);
+  //   checkError(err, "setting rebound arg 1", __LINE__);
+  // }
   err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.cells);
   checkError(err, "setting rebound arg 0", __LINE__);
   err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.tmp_cells);
@@ -340,10 +373,10 @@ float rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obs
   checkError(err, "waiting for rebound kernel", __LINE__);
 
   // Read tot_u from device
-  // err = clEnqueueReadBuffer(
-  //     ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-  //     sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
-  // checkError(err, "reading tot_u data", __LINE__);
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
+      sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
+  checkError(err, "reading tot_u data", __LINE__);
 
   float temp = 0.f;
   for (int i = 0; i < nwork_groups; i++)
