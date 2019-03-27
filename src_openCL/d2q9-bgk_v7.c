@@ -88,15 +88,15 @@ typedef struct
   cl_command_queue queue;
 
   cl_program program;
-  cl_kernel accelerate_flow;
   cl_kernel rebound;
-  cl_kernel av_velocity_kernel;
 
   cl_mem cells;
   cl_mem tmp_cells;
   cl_mem obstacles;
 
   cl_mem d_partial_sums;
+  cl_mem av_vels;
+
 } t_ocl;
 
 /* struct to hold the 'speed' values */
@@ -120,7 +120,7 @@ int initialise(const char *paramfile, const char *obstaclefile,
 ** accelerate_flow(), propagate(), rebound() & collision()
 */
 int accelerate_flow(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl);
-int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl);
+float rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl);
 float av_velocity_kernel(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl);
 int write_values(const t_param params, t_speed *cells, int *obstacles, float *av_vels);
 
@@ -182,16 +182,6 @@ int main(int argc, char *argv[])
   /* initialise our data structures and load values from file */
   initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels, &ocl);
 
-  int tot = 0;
-  for (int i = 0; i < params.nx * params.ny; i++)
-  {
-    if (!obstacles[i])
-    {
-      tot++;
-    }
-  }
-  tot_cells = &tot;
-
   /* iterate for maxIters timesteps */
   gettimeofday(&timstr, NULL);
   tic = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
@@ -208,25 +198,33 @@ int main(int argc, char *argv[])
       sizeof(cl_int) * params.nx * params.ny, obstacles, 0, NULL, NULL);
   checkError(err, "writing obstacles data", __LINE__);
 
-  for (int tt = 0; tt < params.maxIters; tt++)
-  {
-    // timestep(params, cells, tmp_cells, obstacles, ocl);
+  //   for (int tt = 0; tt < params.maxIters; tt++)
+  //   {
+  //     // timestep(params, cells, tmp_cells, obstacles, ocl);
 
-    accelerate_flow(params, cells, obstacles, ocl);    // 0.575965
-    rebound(params, cells, tmp_cells, obstacles, ocl); // 0.779358
+  //     // accelerate_flow(params, cells, obstacles, ocl);    // 0.575965
+  //     av_vels[tt] = rebound(params, cells, tmp_cells, obstacles, ocl) / (float)*tot_cells; // 0.779358
 
-    av_vels[tt] = av_velocity_kernel(params, cells, obstacles, ocl) / (float)*tot_cells; // 4.002941
+  //     // av_vels[tt] = av_velocity_kernel(params, cells, obstacles, ocl) / (float)*tot_cells; // 4.002941
 
-#ifdef DEBUG
-    printf("==timestep: %d==\n", tt);
-    printf("av velocity: %.12E\n", av_vels[tt]);
-    printf("tot density: %.12E\n", total_density(params, cells));
-#endif
-  }
+  // #ifdef DEBUG
+  //     printf("==timestep: %d==\n", tt);
+  //     printf("av velocity: %.12E\n", av_vels[tt]);
+  //     printf("tot density: %.12E\n", total_density(params, cells));
+  // #endif
+  //   }
+
+  rebound(params, cells, tmp_cells, obstacles, ocl);
+
   // Read cells from device
   err = clEnqueueReadBuffer(
       ocl.queue, ocl.cells, CL_TRUE, 0,
       sizeof(t_speed) * params.nx * params.ny, cells, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.av_vels, CL_TRUE, 0,
+      sizeof(float) * params.maxIters, av_vels, 0, NULL, NULL);
   checkError(err, "reading cells data", __LINE__);
 
   gettimeofday(&timstr, NULL);
@@ -249,40 +247,18 @@ int main(int argc, char *argv[])
   return EXIT_SUCCESS;
 }
 
-int accelerate_flow(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl)
+float rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl)
 {
   cl_int err;
 
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.accelerate_flow, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting accelerate_flow arg 0", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 1, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting accelerate_flow arg 1", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 2, sizeof(cl_int), &params.nx);
-  checkError(err, "setting accelerate_flow arg 2", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 3, sizeof(cl_int), &params.ny);
-  checkError(err, "setting accelerate_flow arg 3", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 4, sizeof(cl_float), &params.density);
-  checkError(err, "setting accelerate_flow arg 4", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 5, sizeof(cl_float), &params.accel);
-  checkError(err, "setting accelerate_flow arg 5", __LINE__);
-
-  // Enqueue kernel
-  size_t global[1] = {params.nx};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.accelerate_flow,
-                               1, NULL, global, NULL, 0, NULL, NULL);
-  checkError(err, "enqueueing accelerate_flow kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for accelerate_flow kernel", __LINE__);
-
-  return EXIT_SUCCESS;
-}
-
-int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl)
-{
-  cl_int err;
+  int tot = 0;
+  for (int i = 0; i < params.nx * params.ny; i++)
+  {
+    if (!obstacles[i])
+    {
+      tot++;
+    }
+  }
 
   // Set kernel arguments
   err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.cells);
@@ -291,15 +267,23 @@ int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obsta
   checkError(err, "setting rebound arg 1", __LINE__);
   err = clSetKernelArg(ocl.rebound, 2, sizeof(cl_mem), &ocl.obstacles);
   checkError(err, "setting rebound arg 2", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 3, sizeof(cl_int), &params.nx);
+  err = clSetKernelArg(ocl.rebound, 3, sizeof(cl_mem), &ocl.d_partial_sums);
+  checkError(err, "setting rebound arg 2", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 4, sizeof(cl_mem), &ocl.av_vels);
+  checkError(err, "setting rebound arg 2", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 5, sizeof(cl_int), &params.maxIters);
   checkError(err, "setting rebound arg 3", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 4, sizeof(cl_int), &params.ny);
+  err = clSetKernelArg(ocl.rebound, 6, sizeof(cl_int), &params.nx);
+  checkError(err, "setting rebound arg 3", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 7, sizeof(cl_int), &params.ny);
   checkError(err, "setting rebound arg 4", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 5, sizeof(cl_float), &params.omega);
+  err = clSetKernelArg(ocl.rebound, 8, sizeof(cl_int), &tot);
+  checkError(err, "setting rebound arg 4", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 9, sizeof(cl_float), &params.omega);
   checkError(err, "setting rebound arg 5", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 6, sizeof(cl_float), &params.density);
+  err = clSetKernelArg(ocl.rebound, 10, sizeof(cl_float), &params.density);
   checkError(err, "setting rebound arg 6", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 7, sizeof(cl_float), &params.accel);
+  err = clSetKernelArg(ocl.rebound, 11, sizeof(cl_float), &params.accel);
   checkError(err, "setting rebound arg 7", __LINE__);
 
   // Enqueue kernel
@@ -312,52 +296,21 @@ int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obsta
   err = clFinish(ocl.queue);
   checkError(err, "waiting for rebound kernel", __LINE__);
 
-  return EXIT_SUCCESS;
-}
-
-float av_velocity_kernel(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl)
-{
-  //float *tot_u = calloc(sizeof(float), params.nx * params.ny);
-  float *tot_u = (float *)malloc(sizeof(float) * params.nx * params.ny);
-  for (int i = 0; i < params.nx * params.ny; ++i)
-    tot_u[i] = 0.0f;
-
-  cl_int err;
-
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.av_velocity_kernel, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting av_velocity_kernel arg 0", __LINE__);
-  err = clSetKernelArg(ocl.av_velocity_kernel, 1, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting av_velocity_kernel arg 1", __LINE__);
-  err = clSetKernelArg(ocl.av_velocity_kernel, 2, sizeof(cl_mem), &ocl.d_partial_sums);
-  checkError(err, "setting av_velocity_kernel arg 2", __LINE__);
-  err = clSetKernelArg(ocl.av_velocity_kernel, 3, sizeof(cl_int), &params.nx);
-  checkError(err, "setting av_velocity_kernel arg 3", __LINE__);
-  err = clSetKernelArg(ocl.av_velocity_kernel, 4, sizeof(cl_int), &params.ny);
-  checkError(err, "setting av_velocity_kernel arg 4", __LINE__);
-
-  // Enqueue kernel
-  size_t global[2] = {params.nx, params.ny};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.av_velocity_kernel,
-                               2, NULL, global, NULL, 0, NULL, NULL);
-
-  checkError(err, "enqueueing av_velocity_kernel kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for av_velocity_kernel kernel", __LINE__);
+  // float *tot_u = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  // for (int i = 0; i < params.nx * params.ny; ++i)
+  //   tot_u[i] = 0.0f;
 
   // Read tot_u from device
-  err = clEnqueueReadBuffer(
-      ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-      sizeof(float) * params.nx * params.ny, tot_u, 0, NULL, NULL);
-  checkError(err, "reading tot_u data", __LINE__);
+  // err = clEnqueueReadBuffer(
+  //     ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
+  //     sizeof(float) * params.nx * params.ny, tot_u, 0, NULL, NULL);
+  // checkError(err, "reading tot_u data", __LINE__);
 
   float temp = 0.f;
-  for (int i = 0; i < params.nx * params.ny; i++)
-  {
-    temp += tot_u[i];
-  }
+  // for (int i = 0; i < params.nx * params.ny; i++)
+  // {
+  //   temp += tot_u[i];
+  // }
 
   return temp;
 }
@@ -621,12 +574,8 @@ int initialise(const char *paramfile, const char *obstaclefile,
   checkError(err, "building program", __LINE__);
 
   // Create OpenCL kernels
-  ocl->accelerate_flow = clCreateKernel(ocl->program, "accelerate_flow", &err);
-  checkError(err, "creating accelerate_flow kernel", __LINE__);
   ocl->rebound = clCreateKernel(ocl->program, "rebound", &err);
   checkError(err, "creating rebound kernel", __LINE__);
-  ocl->av_velocity_kernel = clCreateKernel(ocl->program, "av_velocity_kernel", &err);
-  checkError(err, "creating av_velocity_kernel kernel", __LINE__);
 
   // Allocate OpenCL buffers
   ocl->cells = clCreateBuffer(
@@ -644,6 +593,10 @@ int initialise(const char *paramfile, const char *obstaclefile,
   ocl->d_partial_sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
       sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating tot_u buffer", __LINE__);
+  ocl->av_vels = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->maxIters, NULL, &err);
   checkError(err, "creating tot_u buffer", __LINE__);
 
   return EXIT_SUCCESS;
@@ -670,7 +623,7 @@ int finalise(const t_param *params, t_speed **cells_ptr, t_speed **tmp_cells_ptr
   clReleaseMemObject(ocl.cells);
   clReleaseMemObject(ocl.tmp_cells);
   clReleaseMemObject(ocl.obstacles);
-  clReleaseKernel(ocl.accelerate_flow);
+  clReleaseKernel(ocl.rebound);
   clReleaseProgram(ocl.program);
   clReleaseCommandQueue(ocl.queue);
   clReleaseContext(ocl.context);

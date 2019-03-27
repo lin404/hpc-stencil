@@ -36,4 +36,11 @@ not working, bug?
 
 # move av_vels(t) into kernel (v7 based on v4)
 
+108s for 128\*128
+clEnqueueReadBuffer() is expensive, so tried this, but very inefficient...
+
+#
+
+# what else ???
+
 # High Performance Computing - OpenCL
