@@ -68,6 +68,7 @@
 #define AVVELSFILE "av_vels.dat"
 #define OCLFILE "kernels.cl"
 
+#define WORK_ITEMS 16
 /* struct to hold the parameter values */
 typedef struct
 {
@@ -602,7 +603,7 @@ float av_velocity_kernel(const t_param params, t_ocl ocl, int flg)
 {
   cl_int err;
 
-  int work_items = 16;
+  int groupsz = params.nx / WORK_ITEMS;
 
   // Set kernel arguments
   if (flg == 0)
@@ -652,16 +653,18 @@ float av_velocity_kernel(const t_param params, t_ocl ocl, int flg)
   checkError(err, "setting av_velocity_kernel arg 1", __LINE__);
   err = clSetKernelArg(ocl.av_velocity_kernel, 10, sizeof(cl_mem), &ocl.d_partial_sums);
   checkError(err, "setting av_velocity_kernel arg 2", __LINE__);
-  err = clSetKernelArg(ocl.av_velocity_kernel, 11, sizeof(cl_mem) * 16 * 16, NULL);
+  err = clSetKernelArg(ocl.av_velocity_kernel, 11, sizeof(cl_mem) * WORK_ITEMS * WORK_ITEMS, NULL);
   checkError(err, "setting av_velocity_kernel arg 2", __LINE__);
   err = clSetKernelArg(ocl.av_velocity_kernel, 12, sizeof(cl_int), &params.nx);
   checkError(err, "setting av_velocity_kernel arg 3", __LINE__);
   err = clSetKernelArg(ocl.av_velocity_kernel, 13, sizeof(cl_int), &params.ny);
   checkError(err, "setting av_velocity_kernel arg 4", __LINE__);
+  err = clSetKernelArg(ocl.av_velocity_kernel, 14, sizeof(cl_int), &groupsz);
+  checkError(err, "setting av_velocity_kernel arg 4", __LINE__);
 
   // Enqueue kernel
   size_t global[2] = {params.nx, params.ny};
-  size_t local[2] = {work_items, work_items};
+  size_t local[2] = {WORK_ITEMS, WORK_ITEMS};
   err = clEnqueueNDRangeKernel(ocl.queue, ocl.av_velocity_kernel,
                                2, NULL, global, local, 0, NULL, NULL);
 
@@ -672,7 +675,7 @@ float av_velocity_kernel(const t_param params, t_ocl ocl, int flg)
   checkError(err, "waiting for av_velocity_kernel kernel", __LINE__);
 
   // Read tot_u from device
-  int nwork_groups = (params.nx / work_items) * (params.ny / work_items);
+  int nwork_groups = (params.nx / WORK_ITEMS) * (params.ny / WORK_ITEMS);
 
   float *tot_u = (float *)malloc(sizeof(float) * nwork_groups);
   for (int i = 0; i < nwork_groups; ++i)
@@ -1038,9 +1041,11 @@ int initialise(const char *paramfile, const char *obstaclefile,
       ocl->context, CL_MEM_READ_ONLY,
       sizeof(cl_int) * params->nx * params->ny, NULL, &err);
   checkError(err, "creating obstacles buffer", __LINE__);
+
+  int nwork_groups = (params->nx / WORK_ITEMS) * (params->ny / WORK_ITEMS);
   ocl->d_partial_sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(float) * 8 * 8, NULL, &err);
+      sizeof(float) * nwork_groups, NULL, &err);
   checkError(err, "creating tot_u buffer", __LINE__);
 
   return EXIT_SUCCESS;

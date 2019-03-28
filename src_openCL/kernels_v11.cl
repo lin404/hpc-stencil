@@ -169,7 +169,7 @@ kernel void av_velocity_kernel(global float* temp_speed_0,
                               global int *obstacles,
                               global float *global_sums,
                               local float *local_sums,
-                              int nx, int ny)
+                              int nx, int ny, int groupsz)
 {
   int ii = get_global_id(0);
   int jj = get_global_id(1);
@@ -219,6 +219,6 @@ kernel void av_velocity_kernel(global float* temp_speed_0,
             sum += local_sums[i+j*work_items_x];             
           } 
       }                                      
-      global_sums[group_ii+ group_jj*8] = sum;
+      global_sums[group_ii+ group_jj*groupsz] = sum;
    }
 }
