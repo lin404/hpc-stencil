@@ -120,18 +120,6 @@ kernel void rebound(global t_speed* cells,
   y_n = get_local_id(1) + 2;
   y_s = get_local_id(1);
 
-  /*
-  Awrk[0] = block[get_local_id(0) + 1 + (get_local_id(1) + 1) * (get_local_size(0) + 2)].speeds[0]; 
-  Awrk[1] = block[x_w + (get_local_id(1) + 1) * (get_local_size(0) + 2)].speeds[1]; 
-  Awrk[2] = block[get_local_id(0) + 1 + y_s * (get_local_size(0) + 2)].speeds[2];
-  Awrk[3] = block[x_e + (get_local_id(1) + 1) * (get_local_size(0) + 2)].speeds[3];
-  Awrk[4] = block[get_local_id(0) + 1 + y_n * (get_local_size(0) + 2)].speeds[4];
-  Awrk[5] = block[x_w + y_s * (get_local_size(0) + 2)].speeds[5];
-  Awrk[6] = block[x_e + y_s * (get_local_size(0) + 2)].speeds[6];
-  Awrk[7] = block[x_e + y_n * (get_local_size(0) + 2)].speeds[7];
-  Awrk[8] = block[x_w + y_n * (get_local_size(0) + 2)].speeds[8];
-  */
-
   if (obstacles[id])
   {
     cells[id].speeds[1] = block[x_e + (get_local_id(1) + 1) * (get_local_size(0) + 2)].speeds[3];

@@ -39,8 +39,17 @@ not working, bug?
 108s for 128\*128
 clEnqueueReadBuffer() is expensive, so tried this, but very inefficient...
 
-#
+# block cell for propagate(), rebound() and collision() (v9)
 
-# what else ???
+2.00s before
+OpenCL error during 'waiting for rebound kernel'
+
+# block cell for av_velocity() (v10)
+
+4.00s before
+
+# SoA reduction for av_velocity() (v11)
+
+3.7s for 128\*128
 
 # High Performance Computing - OpenCL
