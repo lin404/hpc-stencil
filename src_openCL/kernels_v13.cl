@@ -119,7 +119,7 @@ kernel void rebound(global float* speed_0,
     temp_speed_5[ii + jj*nx] = speeds[7];
     temp_speed_6[ii + jj*nx] = speeds[8];
 
-    local_sums[local_ii + local_jj * work_items_x] = 0.f;
+    local_sums[ii + jj * nx] = 0.f;
 
   } else {
         float local_density = 0.f;
@@ -178,25 +178,23 @@ kernel void rebound(global float* speed_0,
         u_x = (temp_speed_1[ii + jj * nx] + temp_speed_5[ii + jj * nx] + temp_speed_8[ii + jj * nx] - (temp_speed_3[ii + jj * nx] + temp_speed_6[ii + jj * nx] + temp_speed_7[ii + jj * nx])) / local_density;
         u_y = (temp_speed_2[ii + jj * nx] + temp_speed_5[ii + jj * nx] + temp_speed_6[ii + jj * nx] - (temp_speed_4[ii + jj * nx] + temp_speed_7[ii + jj * nx] + temp_speed_8[ii + jj * nx])) / local_density;
         
-        local_sums[local_ii + local_jj * work_items_x] = sqrt((u_x * u_x) + (u_y * u_y));
+        local_sums[ii + jj * nx] = sqrt((u_x * u_x) + (u_y * u_y));
 
   }
 
-  barrier(CLK_LOCAL_MEM_FENCE);
+  barrier(CLK_GLOBAL_MEM_FENCE);
 
   float sum;                              
   int i;
   int j;
 
-  if (local_ii == 0 && local_jj==0) {                      
+  if (ii == 0 && jj==0) {                      
       sum = 0.0f;                            
    
-      for (j=0; j<work_items_y; j++) {        
-          for(i=0; i<work_items_x; i++){
-            sum += local_sums[i+j*work_items_x];             
-          } 
+      for (j=0; j<nx*ny; j++) {        
+        sum += local_sums[j];             
       }                                      
-      global_sums[group_ii+ group_jj*groupsz] = sum;
+      global_sums = sum;
    }
 }
 

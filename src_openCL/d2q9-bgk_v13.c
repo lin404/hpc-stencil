@@ -116,6 +116,7 @@ typedef struct
   cl_mem temp_speed_8;
 
   cl_mem d_partial_sums;
+  cl_mem local_sums;
 } t_ocl;
 
 /* struct to hold the 'speed' values */
@@ -577,9 +578,9 @@ float rebound(const t_param params, t_ocl ocl, int flg)
   }
   err = clSetKernelArg(ocl.rebound, 18, sizeof(cl_mem), &ocl.obstacles);
   checkError(err, "setting rebound arg 2", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_mem), &ocl.d_partial_sums);
+  err = clSetKernelArg(ocl.rebound, 19, sizeof(float), &ocl.d_partial_sums);
   checkError(err, "setting rebound arg 2", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_mem) * WORK_ITEMS * WORK_ITEMS, NULL);
+  err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_mem), &ocl.local_sums);
   checkError(err, "setting rebound arg 2", __LINE__);
   err = clSetKernelArg(ocl.rebound, 21, sizeof(cl_int), &params.nx);
   checkError(err, "setting rebound arg 3", __LINE__);
@@ -592,9 +593,9 @@ float rebound(const t_param params, t_ocl ocl, int flg)
 
   // Enqueue kernel
   size_t global[2] = {params.nx, params.ny};
-  size_t local[2] = {WORK_ITEMS, WORK_ITEMS};
+  size_t local[2] = {params.nx, params.nx};
   err = clEnqueueNDRangeKernel(ocl.queue, ocl.rebound,
-                               2, NULL, global, local, 0, NULL, NULL);
+                               2, NULL, global, NULL, 0, NULL, NULL);
   checkError(err, "enqueueing rebound kernel", __LINE__);
 
   // Wait for kernel to finish
@@ -609,12 +610,12 @@ float rebound(const t_param params, t_ocl ocl, int flg)
     tot_u[i] = 0.0f;
   }
 
+  float sum = 0.f;
   err = clEnqueueReadBuffer(
       ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-      sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
+      1, &sum, 0, NULL, NULL);
   checkError(err, "reading tot_u data", __LINE__);
 
-  float sum = 0.f;
   for (int i = 0; i < nwork_groups; i++)
   {
     sum += tot_u[i];
@@ -1068,7 +1069,11 @@ int initialise(const char *paramfile, const char *obstaclefile,
   int nwork_groups = (params->nx / WORK_ITEMS) * (params->ny / WORK_ITEMS);
   ocl->d_partial_sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(float) * nwork_groups, NULL, &err);
+      1, NULL, &err);
+  checkError(err, "creating tot_u buffer", __LINE__);
+  ocl->local_sums = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
   checkError(err, "creating tot_u buffer", __LINE__);
 
   return EXIT_SUCCESS;
