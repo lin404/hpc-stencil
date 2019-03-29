@@ -320,13 +320,13 @@ int main(int argc, char *argv[])
   {
     if (tt % 2 == 0)
     {
-      accelerate_flow(params, ocl, 0);                           // 0.63
+      // accelerate_flow(params, ocl, 0);                           // 0.63
       av_vels[tt] = rebound(params, ocl, 0) / (float)*tot_cells; // 0.95
       // av_vels[tt] = av_velocity_kernel(params, ocl, 0) / (float)*tot_cells; // 1.7
     }
     else
     {
-      accelerate_flow(params, ocl, 1);                           //
+      // accelerate_flow(params, ocl, 1);                           //
       av_vels[tt] = rebound(params, ocl, 1) / (float)*tot_cells; //
       // av_vels[tt] = av_velocity_kernel(params, ocl, 1) / (float)*tot_cells; // 1.7
     }
@@ -589,6 +589,10 @@ float rebound(const t_param params, t_ocl ocl, int flg)
   checkError(err, "setting rebound arg 5", __LINE__);
   err = clSetKernelArg(ocl.rebound, 24, sizeof(cl_int), &groupsz);
   checkError(err, "setting rebound arg 4", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 25, sizeof(cl_float), &params.density);
+  checkError(err, "setting rebound arg 6", __LINE__);
+  err = clSetKernelArg(ocl.rebound, 26, sizeof(cl_float), &params.accel);
+  checkError(err, "setting rebound arg 7", __LINE__);
 
   // Enqueue kernel
   size_t global[2] = {params.nx, params.ny};

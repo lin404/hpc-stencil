@@ -68,7 +68,7 @@ kernel void rebound(global float* speed_0,
                     global float* temp_speed_7,
                     global float* temp_speed_8,
                     global int* obstacles,
-                    global float* global_sums,
+                    global float *global_sums,
                     global float* local_sums,
                     int nx, int ny,
                     float omega, int groupsz)
@@ -194,6 +194,6 @@ kernel void rebound(global float* speed_0,
       for (j=0; j<nx*ny; j++) {        
         sum += local_sums[j];             
       }                                      
-      global_sums[0] = sum;
+      global_sums = &sum;
    }
 }

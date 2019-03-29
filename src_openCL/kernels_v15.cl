@@ -71,17 +71,13 @@ kernel void rebound(global float* speed_0,
                     global float *global_sums,
                     local float *local_sums,
                     int nx, int ny,
-                    float omega, int groupsz,
-                    float density, float accel)
+                    float omega, int groupsz)
 {  
 
   const float c_sq = 1.f / 3.f; /* square of speed of sound */
   const float w0 = 4.f / 9.f;  /* weighting factor */
   const float w1 = 1.f / 9.f;  /* weighting factor */
   const float w2 = 1.f / 36.f; /* weighting factor */
-
-  float w3 = density * accel / 9.0;
-  float w4 = density * accel / 36.0;
 
   int ii = get_global_id(0);
   int jj = get_global_id(1);
@@ -94,25 +90,6 @@ kernel void rebound(global float* speed_0,
 
   int work_items_x  = get_local_size(0);
   int work_items_y  = get_local_size(1);
-
-  if(jj==ny-2){
-  if (!obstacles[ii + jj* nx]
-      && (speed_3[ii + jj* nx] - w3) > 0.f
-      && (speed_6[ii + jj* nx] - w4) > 0.f
-      && (speed_7[ii + jj* nx] - w4) > 0.f)
-  {
-    /* increase 'east-side' densities */
-    speed_1[ii + jj* nx] += w3;
-    speed_5[ii + jj* nx] += w4;
-    speed_8[ii + jj* nx] += w4;
-    /* decrease 'west-side' densities */
-    speed_3[ii + jj* nx] -= w3;
-    speed_6[ii + jj* nx] -= w4;
-    speed_7[ii + jj* nx] -= w4;
-  }
-  }
-
-  barrier(CLK_GLOBAL_MEM_FENCE);
 
   int y_n = (jj + 1) % ny;
   int x_e = (ii + 1) % nx;
@@ -130,21 +107,6 @@ kernel void rebound(global float* speed_0,
   speeds[7] = speed_7[x_e + y_n*nx];
   speeds[8] = speed_8[x_w + y_n*nx];
 
-  if (obstacles[jj*nx + ii])
-  {
-    temp_speed_0[ii + jj*nx] = speeds[0];
-    temp_speed_3[ii + jj*nx] = speeds[1];
-    temp_speed_4[ii + jj*nx] = speeds[2];
-    temp_speed_1[ii + jj*nx] = speeds[3];
-    temp_speed_2[ii + jj*nx] = speeds[4];
-    temp_speed_7[ii + jj*nx] = speeds[5];
-    temp_speed_8[ii + jj*nx] = speeds[6];
-    temp_speed_5[ii + jj*nx] = speeds[7];
-    temp_speed_6[ii + jj*nx] = speeds[8];
-
-    local_sums[local_ii + local_jj * work_items_x] = 0.f;
-
-  } else {
         float local_density = 0.f;
         for(int kk=0; kk<NSPEEDS; kk++){
           local_density += speeds[kk];
@@ -176,15 +138,16 @@ kernel void rebound(global float* speed_0,
         d_equ[7] = w2 * local_density * (1.f + u[7] / c_sq + (u[7] * u[7]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
         d_equ[8] = w2 * local_density * (1.f + u[8] / c_sq + (u[8] * u[8]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
 
-        temp_speed_0[ii + jj * nx] = speeds[0] + omega * (d_equ[0] - speeds[0]);
-        temp_speed_1[ii + jj * nx] = speeds[1] + omega * (d_equ[1] - speeds[1]);
-        temp_speed_2[ii + jj * nx] = speeds[2] + omega * (d_equ[2] - speeds[2]);
-        temp_speed_3[ii + jj * nx] = speeds[3] + omega * (d_equ[3] - speeds[3]);
-        temp_speed_4[ii + jj * nx] = speeds[4] + omega * (d_equ[4] - speeds[4]);
-        temp_speed_5[ii + jj * nx] = speeds[5] + omega * (d_equ[5] - speeds[5]);
-        temp_speed_6[ii + jj * nx] = speeds[6] + omega * (d_equ[6] - speeds[6]);
-        temp_speed_7[ii + jj * nx] = speeds[7] + omega * (d_equ[7] - speeds[7]);
-        temp_speed_8[ii + jj * nx] = speeds[8] + omega * (d_equ[8] - speeds[8]);
+
+        temp_speed_0[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[0]) : (speeds[0] + omega * (d_equ[0] - speeds[0]));
+        temp_speed_1[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[3]) : (speeds[1] + omega * (d_equ[1] - speeds[1]));
+        temp_speed_2[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[4]) : (speeds[2] + omega * (d_equ[2] - speeds[2]));
+        temp_speed_3[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[1]) : (speeds[3] + omega * (d_equ[3] - speeds[3]));
+        temp_speed_4[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[2]) : (speeds[4] + omega * (d_equ[4] - speeds[4]));
+        temp_speed_5[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[7]) : (speeds[5] + omega * (d_equ[5] - speeds[5]));
+        temp_speed_6[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[8]) : (speeds[6] + omega * (d_equ[6] - speeds[6]));
+        temp_speed_7[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[5]) : (speeds[7] + omega * (d_equ[7] - speeds[7]));
+        temp_speed_8[ii + jj * nx] = (obstacles[jj*nx + ii])? (speeds[6]) : (speeds[8] + omega * (d_equ[8] - speeds[8]));
 
         local_density = 0.f;
 
@@ -201,9 +164,7 @@ kernel void rebound(global float* speed_0,
         u_x = (temp_speed_1[ii + jj * nx] + temp_speed_5[ii + jj * nx] + temp_speed_8[ii + jj * nx] - (temp_speed_3[ii + jj * nx] + temp_speed_6[ii + jj * nx] + temp_speed_7[ii + jj * nx])) / local_density;
         u_y = (temp_speed_2[ii + jj * nx] + temp_speed_5[ii + jj * nx] + temp_speed_6[ii + jj * nx] - (temp_speed_4[ii + jj * nx] + temp_speed_7[ii + jj * nx] + temp_speed_8[ii + jj * nx])) / local_density;
         
-        local_sums[local_ii + local_jj * work_items_x] = sqrt((u_x * u_x) + (u_y * u_y));
-
-  }
+        local_sums[local_ii + local_jj * work_items_x] = (obstacles[jj*nx + ii])? (0.f) : (sqrt((u_x * u_x) + (u_y * u_y)));
 
   barrier(CLK_LOCAL_MEM_FENCE);
 

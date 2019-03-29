@@ -577,7 +577,7 @@ float rebound(const t_param params, t_ocl ocl, int flg)
   }
   err = clSetKernelArg(ocl.rebound, 18, sizeof(cl_mem), &ocl.obstacles);
   checkError(err, "setting rebound arg 2", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_mem), &ocl.d_partial_sums);
+  err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_float), &ocl.d_partial_sums);
   checkError(err, "setting rebound arg 19", __LINE__);
   err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_mem), &ocl.local_sums);
   checkError(err, "setting rebound arg 2", __LINE__);
@@ -612,7 +612,7 @@ float rebound(const t_param params, t_ocl ocl, int flg)
   float sum = 0.f;
   err = clEnqueueReadBuffer(
       ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-      sizeof(float) * 1, tot_u, 0, NULL, NULL);
+      1, tot_u, 0, NULL, NULL);
   checkError(err, "reading tot_u data", __LINE__);
 
   // for (int i = 0; i < nwork_groups; i++)
@@ -969,7 +969,7 @@ int initialise(const char *paramfile, const char *obstaclefile,
   int nwork_groups = (params->nx / WORK_ITEMS) * (params->ny / WORK_ITEMS);
   ocl->d_partial_sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(float) * 1, NULL, &err);
+      1, NULL, &err);
   checkError(err, "creating tot_u buffer", __LINE__);
   ocl->local_sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
