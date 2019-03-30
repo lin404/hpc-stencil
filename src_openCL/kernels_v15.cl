@@ -72,7 +72,6 @@ kernel void rebound(global float* speed_0,
   int y_s = (jj == 0) ? (jj + ny - 1) : (jj - 1);
   int x_w = (ii == 0) ? (ii + nx - 1) : (ii - 1);
 
-  
   float speeds[NSPEEDS];
   speeds[0] = speed_0[ii + jj*nx];
   speeds[1] = speed_1[x_w + jj*nx];

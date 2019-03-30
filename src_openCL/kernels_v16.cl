@@ -72,7 +72,6 @@ kernel void rebound(global float* speed_0,
   int y_s = (jj == 0) ? (jj + ny - 1) : (jj - 1);
   int x_w = (ii == 0) ? (ii + nx - 1) : (ii - 1);
 
-  
   float speeds[NSPEEDS];
   speeds[0] = speed_0[ii + jj*nx];
   speeds[1] = speed_1[x_w + jj*nx];
@@ -84,8 +83,8 @@ kernel void rebound(global float* speed_0,
   speeds[7] = speed_7[x_e + y_n*nx];
   speeds[8] = speed_8[x_w + y_n*nx];
 
-        float local_density = 0.f;
-        for(int kk=0; kk<NSPEEDS; kk++){
+  float local_density = 0.f;
+  for(int kk=0; kk<NSPEEDS; kk++){
           local_density += speeds[kk];
         }
 
@@ -165,6 +164,32 @@ kernel void rebound(global float* speed_0,
         } 
         global_sums[group_ii + group_jj*groupsz] = sum;
     }
-
 }
+
+kernel void reduction(global float *input,
+                      global float *global_sums,
+                      local float *local_sums)
+{
+  int global_id = get_global_id(0);
+  int global_size = get_global_size(0);
+  int local_id = get_local_id(0);
+  int group_size  = get_local_size(0);
+  
+  local_sums[local_id] = input[global_id]+input[global_id+global_size];
+  barrier(CLK_LOCAL_MEM_FENCE);
+
+  for (int i=group_size/2; i>1; i/=2)
+  {
+    if(local_id<i)
+    {
+      local_sums[local_id] += local_sums[local_id+i];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+  }
+  
+  if(local_id == 0){
+    global_sums[get_group_id(0)] = local_sums[0]+local_sums[1];
+  } 
+} 
+
 

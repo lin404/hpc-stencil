@@ -65,6 +65,12 @@ how?
 
 nothing help
 
-# optimization (v15)
+# optimization (v15) reduction GCP
+
+1.9s for 128\*128
+
+# optimization (v16) reduction twice GCP
+
+3.0s for 128\*128
 
 # High Performance Computing - OpenCL
