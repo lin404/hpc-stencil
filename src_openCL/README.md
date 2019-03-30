@@ -54,7 +54,8 @@ OpenCL error during 'waiting for rebound kernel'
 
 # combine (v12)
 
-2.9s for 128\*128
+2.4s for 128\*128
+22.5 for 1024\*1024
 
 # read only one float value (v13)
 
@@ -63,5 +64,7 @@ how?
 # opemMP (v14)
 
 nothing help
+
+# optimization (v15)
 
 # High Performance Computing - OpenCL
