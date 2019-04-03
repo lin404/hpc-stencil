@@ -56,7 +56,6 @@
 #include <string.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <omp.h>
 
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
@@ -91,6 +90,7 @@ typedef struct
 
   cl_program program;
   cl_kernel rebound;
+  cl_kernel reduction;
 
   cl_mem obstacles;
   cl_mem speed_0;
@@ -113,6 +113,8 @@ typedef struct
   cl_mem temp_speed_7;
   cl_mem temp_speed_8;
 
+  cl_mem sums;
+  cl_mem partial_sums;
   cl_mem d_partial_sums;
 } t_ocl;
 
@@ -267,7 +269,7 @@ int main(int argc, char *argv[])
   }
 
   groupsz = params.nx / WORK_ITEMS;
-  nwork_groups = (params.nx / WORK_ITEMS) * (params.ny / WORK_ITEMS);
+  nwork_groups = params.nx * params.ny / (2 * 16);
   tot_u = (float *)malloc(sizeof(float) * nwork_groups);
   for (int i = 0; i < nwork_groups; ++i)
   {
@@ -326,6 +328,8 @@ int main(int argc, char *argv[])
   {
 
     cl_int err;
+
+    int size = params.nx * params.ny;
 
     if (tt % 2 == 0)
     {
@@ -407,44 +411,98 @@ int main(int argc, char *argv[])
     }
     err = clSetKernelArg(ocl.rebound, 18, sizeof(cl_mem), &ocl.obstacles);
     checkError(err, "setting rebound arg 18", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_mem), &ocl.d_partial_sums);
-    checkError(err, "setting rebound arg 19", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_mem) * WORK_ITEMS * WORK_ITEMS, NULL);
-    checkError(err, "setting rebound arg 20", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 21, sizeof(cl_int), &params.nx);
+    err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_int), &params.nx);
     checkError(err, "setting rebound arg 3", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 22, sizeof(cl_int), &params.ny);
+    err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_int), &params.ny);
     checkError(err, "setting rebound arg 4", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 23, sizeof(cl_float), &params.omega);
+    err = clSetKernelArg(ocl.rebound, 21, sizeof(cl_float), &params.omega);
     checkError(err, "setting rebound arg 5", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 24, sizeof(cl_int), &groupsz);
+    err = clSetKernelArg(ocl.rebound, 22, sizeof(cl_int), &groupsz);
     checkError(err, "setting rebound arg 4", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 25, sizeof(cl_float), &params.density);
+    err = clSetKernelArg(ocl.rebound, 23, sizeof(cl_float), &params.density);
     checkError(err, "setting rebound arg 6", __LINE__);
-    err = clSetKernelArg(ocl.rebound, 26, sizeof(cl_float), &params.accel);
+    err = clSetKernelArg(ocl.rebound, 24, sizeof(cl_float), &params.accel);
     checkError(err, "setting rebound arg 7", __LINE__);
 
     // Enqueue kernel
     size_t global[2] = {params.nx, params.ny};
     size_t local[2] = {WORK_ITEMS, WORK_ITEMS};
     err = clEnqueueNDRangeKernel(ocl.queue, ocl.rebound,
-                                 2, NULL, global, local, 0, NULL, NULL);
+                                 2, NULL, global, NULL, 0, NULL, NULL);
     checkError(err, "enqueueing rebound kernel", __LINE__);
 
-    // Wait for kernel to finish
     err = clFinish(ocl.queue);
     checkError(err, "waiting for rebound kernel", __LINE__);
 
-    // err = clEnqueueReadBuffer(
-    //     ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-    //     sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
-    // checkError(err, "reading tot_u data", __LINE__);
+    // Reduction GPU
+    if (tt % 2 == 0)
+    {
+      err = clSetKernelArg(ocl.reduction, 0, sizeof(cl_mem), &ocl.temp_speed_0);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 1, sizeof(cl_mem), &ocl.temp_speed_1);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 2, sizeof(cl_mem), &ocl.temp_speed_2);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 3, sizeof(cl_mem), &ocl.temp_speed_3);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 4, sizeof(cl_mem), &ocl.temp_speed_4);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 5, sizeof(cl_mem), &ocl.temp_speed_5);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 6, sizeof(cl_mem), &ocl.temp_speed_6);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 7, sizeof(cl_mem), &ocl.temp_speed_7);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 8, sizeof(cl_mem), &ocl.temp_speed_8);
+      checkError(err, "setting reduction arg 1", __LINE__);
+    }
+    else
+    {
+      err = clSetKernelArg(ocl.reduction, 0, sizeof(cl_mem), &ocl.speed_0);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 1, sizeof(cl_mem), &ocl.speed_1);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 2, sizeof(cl_mem), &ocl.speed_2);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 3, sizeof(cl_mem), &ocl.speed_3);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 4, sizeof(cl_mem), &ocl.speed_4);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 5, sizeof(cl_mem), &ocl.speed_5);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 6, sizeof(cl_mem), &ocl.speed_6);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 7, sizeof(cl_mem), &ocl.speed_7);
+      checkError(err, "setting reduction arg 1", __LINE__);
+      err = clSetKernelArg(ocl.reduction, 8, sizeof(cl_mem), &ocl.speed_8);
+      checkError(err, "setting reduction arg 1", __LINE__);
+    }
+    err = clSetKernelArg(ocl.reduction, 9, sizeof(cl_mem), &ocl.obstacles);
+    checkError(err, "setting reduction arg 18", __LINE__);
+    err = clSetKernelArg(ocl.reduction, 10, sizeof(cl_mem), &ocl.sums);
+    checkError(err, "setting reduction arg 0", __LINE__);
+    err = clSetKernelArg(ocl.reduction, 11, sizeof(cl_mem) * 16, NULL);
+    checkError(err, "setting reduction arg 2", __LINE__);
+
+    size_t global_sum[1] = {size / 2};
+    size_t local_sum[1] = {16};
+    err = clEnqueueNDRangeKernel(ocl.queue, ocl.reduction,
+                                 1, NULL, global_sum, local_sum, 0, NULL, NULL);
+    checkError(err, "enqueueing reduction kernel", __LINE__);
+
+    err = clFinish(ocl.queue);
+    checkError(err, "waiting for reduction kernel", __LINE__);
+
+    err = clEnqueueReadBuffer(
+        ocl.queue, ocl.sums, CL_TRUE, 0,
+        sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
+    checkError(err, "reading tot_u data", __LINE__);
 
     float sum = 0.f;
-    // for (int i = 0; i < nwork_groups; i++)
-    // {
-    //   sum += tot_u[i];
-    // }
+    for (int i = 0; i < nwork_groups; i++)
+    {
+      sum += tot_u[i];
+    }
 
     av_vels[tt] = sum / (float)tot_cells;
 
@@ -795,6 +853,8 @@ int initialise(const char *paramfile, const char *obstaclefile,
   // Create OpenCL kernels
   ocl->rebound = clCreateKernel(ocl->program, "rebound", &err);
   checkError(err, "creating rebound kernel", __LINE__);
+  ocl->reduction = clCreateKernel(ocl->program, "reduction", &err);
+  checkError(err, "creating reduction kernel", __LINE__);
 
   // Allocate OpenCL buffers
   ocl->speed_0 = clCreateBuffer(
@@ -876,11 +936,10 @@ int initialise(const char *paramfile, const char *obstaclefile,
       sizeof(cl_int) * params->nx * params->ny, NULL, &err);
   checkError(err, "creating obstacles buffer", __LINE__);
 
-  int nwork_groups = (params->nx / WORK_ITEMS) * (params->ny / WORK_ITEMS);
-  ocl->d_partial_sums = clCreateBuffer(
+  ocl->sums = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(float) * nwork_groups, NULL, &err);
-  checkError(err, "creating tot_u buffer", __LINE__);
+      sizeof(float) * (params->nx * params->ny / 2), NULL, &err);
+  checkError(err, "creating sums buffer", __LINE__);
 
   return EXIT_SUCCESS;
 }
@@ -925,6 +984,7 @@ int finalise(const t_param *params, t_speed **cells_ptr, t_speed **tmp_cells_ptr
 
   clReleaseMemObject(ocl.obstacles);
   clReleaseKernel(ocl.rebound);
+  clReleaseKernel(ocl.reduction);
   clReleaseProgram(ocl.program);
   clReleaseCommandQueue(ocl.queue);
   clReleaseContext(ocl.context);

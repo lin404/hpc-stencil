@@ -1,5 +1,3 @@
-# OpenCL
-
 # kernel code for all timestep functions (v0)
 
 31.9s for 128\*128
@@ -72,5 +70,3 @@ nothing help
 # optimization (v16) reduction twice GCP
 
 3.0s for 128\*128
-
-# High Performance Computing - OpenCL

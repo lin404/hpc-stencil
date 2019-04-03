@@ -56,6 +56,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <omp.h>
 
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
@@ -68,6 +69,7 @@
 #define AVVELSFILE "av_vels.dat"
 #define OCLFILE "kernels.cl"
 
+#define WORK_ITEMS 32
 /* struct to hold the parameter values */
 typedef struct
 {
@@ -88,15 +90,30 @@ typedef struct
   cl_command_queue queue;
 
   cl_program program;
-  cl_kernel accelerate_flow;
-  cl_kernel propagate;
   cl_kernel rebound;
-  cl_kernel collision;
 
-  cl_mem cells;
-  cl_mem tmp_cells;
   cl_mem obstacles;
+  cl_mem speed_0;
+  cl_mem speed_1;
+  cl_mem speed_2;
+  cl_mem speed_3;
+  cl_mem speed_4;
+  cl_mem speed_5;
+  cl_mem speed_6;
+  cl_mem speed_7;
+  cl_mem speed_8;
 
+  cl_mem temp_speed_0;
+  cl_mem temp_speed_1;
+  cl_mem temp_speed_2;
+  cl_mem temp_speed_3;
+  cl_mem temp_speed_4;
+  cl_mem temp_speed_5;
+  cl_mem temp_speed_6;
+  cl_mem temp_speed_7;
+  cl_mem temp_speed_8;
+
+  cl_mem d_partial_sums;
 } t_ocl;
 
 /* struct to hold the 'speed' values */
@@ -119,11 +136,7 @@ int initialise(const char *paramfile, const char *obstaclefile,
 ** timestep calls, in order, the functions:
 ** accelerate_flow(), propagate(), rebound() & collision()
 */
-int timestep(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl);
-int accelerate_flow(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl);
-int propagate(const t_param params, t_speed *cells, t_speed *tmp_cells, t_ocl ocl);
-int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl);
-int collision(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl);
+float rebound(const t_param params, t_ocl ocl, int flg);
 int write_values(const t_param params, t_speed *cells, int *obstacles, float *av_vels);
 
 /* finalise, including freeing up allocated memory */
@@ -168,6 +181,31 @@ int main(int argc, char *argv[])
   double usrtim;         /* floating point number to record elapsed user CPU time */
   double systim;         /* floating point number to record elapsed system CPU time */
 
+  float *speed_0;
+  float *speed_1;
+  float *speed_2;
+  float *speed_3;
+  float *speed_4;
+  float *speed_5;
+  float *speed_6;
+  float *speed_7;
+  float *speed_8;
+
+  float *temp_speed_0;
+  float *temp_speed_1;
+  float *temp_speed_2;
+  float *temp_speed_3;
+  float *temp_speed_4;
+  float *temp_speed_5;
+  float *temp_speed_6;
+  float *temp_speed_7;
+  float *temp_speed_8;
+
+  int tot_cells = 0;
+  int nwork_groups = 0;
+  int groupsz = 0;
+  float *tot_u;
+
   /* parse the command line */
   if (argc != 3)
   {
@@ -182,14 +220,96 @@ int main(int argc, char *argv[])
   /* initialise our data structures and load values from file */
   initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels, &ocl);
 
-  /* iterate for maxIters timesteps */
-  gettimeofday(&timstr, NULL);
-  tic = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
+  speed_0 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_1 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_2 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_3 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_4 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_5 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_6 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_7 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  speed_8 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_0 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_1 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_2 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_3 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_4 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_5 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_6 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_7 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+  temp_speed_8 = (float *)malloc(sizeof(float) * params.nx * params.ny);
+
+  for (int i = 0; i < params.nx * params.ny; i++)
+  {
+    if (!obstacles[i])
+    {
+      tot_cells++;
+    }
+
+    speed_0[i] = cells[i].speeds[0];
+    speed_1[i] = cells[i].speeds[1];
+    speed_2[i] = cells[i].speeds[2];
+    speed_3[i] = cells[i].speeds[3];
+    speed_4[i] = cells[i].speeds[4];
+    speed_5[i] = cells[i].speeds[5];
+    speed_6[i] = cells[i].speeds[6];
+    speed_7[i] = cells[i].speeds[7];
+    speed_8[i] = cells[i].speeds[8];
+    temp_speed_0[i] = tmp_cells[i].speeds[0];
+    temp_speed_1[i] = tmp_cells[i].speeds[1];
+    temp_speed_2[i] = tmp_cells[i].speeds[2];
+    temp_speed_3[i] = tmp_cells[i].speeds[3];
+    temp_speed_4[i] = tmp_cells[i].speeds[4];
+    temp_speed_5[i] = tmp_cells[i].speeds[5];
+    temp_speed_6[i] = tmp_cells[i].speeds[6];
+    temp_speed_7[i] = tmp_cells[i].speeds[7];
+    temp_speed_8[i] = tmp_cells[i].speeds[8];
+  }
+
+  groupsz = params.nx / WORK_ITEMS;
+  nwork_groups = (params.nx / WORK_ITEMS) * (params.ny / WORK_ITEMS);
+  tot_u = (float *)malloc(sizeof(float) * nwork_groups);
+  for (int i = 0; i < nwork_groups; ++i)
+  {
+    tot_u[i] = 0.0f;
+  }
 
   // Write cells to OpenCL buffer
   err = clEnqueueWriteBuffer(
-      ocl.queue, ocl.cells, CL_TRUE, 0,
-      sizeof(t_speed) * params.nx * params.ny, cells, 0, NULL, NULL);
+      ocl.queue, ocl.speed_0, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_0, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_1, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_1, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_2, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_2, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_3, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_3, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_4, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_4, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_5, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_5, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_6, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_6, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_7, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_7, 0, NULL, NULL);
+  checkError(err, "writing cells data", __LINE__);
+  err = clEnqueueWriteBuffer(
+      ocl.queue, ocl.speed_8, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_8, 0, NULL, NULL);
   checkError(err, "writing cells data", __LINE__);
 
   // Write obstacles to OpenCL buffer
@@ -198,10 +318,136 @@ int main(int argc, char *argv[])
       sizeof(cl_int) * params.nx * params.ny, obstacles, 0, NULL, NULL);
   checkError(err, "writing obstacles data", __LINE__);
 
+  /* iterate for maxIters timesteps */
+  gettimeofday(&timstr, NULL);
+  tic = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
+
   for (int tt = 0; tt < params.maxIters; tt++)
   {
-    timestep(params, cells, tmp_cells, obstacles, ocl);
-    // av_vels[tt] = av_velocity(params, cells, obstacles, ocl);
+
+    cl_int err;
+
+    if (tt % 2 == 0)
+    {
+      err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.speed_0);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.speed_1);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 2, sizeof(cl_mem), &ocl.speed_2);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 3, sizeof(cl_mem), &ocl.speed_3);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 4, sizeof(cl_mem), &ocl.speed_4);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 5, sizeof(cl_mem), &ocl.speed_5);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 6, sizeof(cl_mem), &ocl.speed_6);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 7, sizeof(cl_mem), &ocl.speed_7);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 8, sizeof(cl_mem), &ocl.speed_8);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 9, sizeof(cl_mem), &ocl.temp_speed_0);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 10, sizeof(cl_mem), &ocl.temp_speed_1);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 11, sizeof(cl_mem), &ocl.temp_speed_2);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 12, sizeof(cl_mem), &ocl.temp_speed_3);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 13, sizeof(cl_mem), &ocl.temp_speed_4);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 14, sizeof(cl_mem), &ocl.temp_speed_5);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 15, sizeof(cl_mem), &ocl.temp_speed_6);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 16, sizeof(cl_mem), &ocl.temp_speed_7);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 17, sizeof(cl_mem), &ocl.temp_speed_8);
+      checkError(err, "setting rebound arg 1", __LINE__);
+    }
+    else
+    {
+      err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.temp_speed_0);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.temp_speed_1);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 2, sizeof(cl_mem), &ocl.temp_speed_2);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 3, sizeof(cl_mem), &ocl.temp_speed_3);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 4, sizeof(cl_mem), &ocl.temp_speed_4);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 5, sizeof(cl_mem), &ocl.temp_speed_5);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 6, sizeof(cl_mem), &ocl.temp_speed_6);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 7, sizeof(cl_mem), &ocl.temp_speed_7);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 8, sizeof(cl_mem), &ocl.temp_speed_8);
+      checkError(err, "setting rebound arg 0", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 9, sizeof(cl_mem), &ocl.speed_0);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 10, sizeof(cl_mem), &ocl.speed_1);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 11, sizeof(cl_mem), &ocl.speed_2);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 12, sizeof(cl_mem), &ocl.speed_3);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 13, sizeof(cl_mem), &ocl.speed_4);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 14, sizeof(cl_mem), &ocl.speed_5);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 15, sizeof(cl_mem), &ocl.speed_6);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 16, sizeof(cl_mem), &ocl.speed_7);
+      checkError(err, "setting rebound arg 1", __LINE__);
+      err = clSetKernelArg(ocl.rebound, 17, sizeof(cl_mem), &ocl.speed_8);
+      checkError(err, "setting rebound arg 1", __LINE__);
+    }
+    err = clSetKernelArg(ocl.rebound, 18, sizeof(cl_mem), &ocl.obstacles);
+    checkError(err, "setting rebound arg 18", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 19, sizeof(cl_mem), &ocl.d_partial_sums);
+    checkError(err, "setting rebound arg 19", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 20, sizeof(cl_mem) * WORK_ITEMS * WORK_ITEMS, NULL);
+    checkError(err, "setting rebound arg 20", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 21, sizeof(cl_int), &params.nx);
+    checkError(err, "setting rebound arg 3", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 22, sizeof(cl_int), &params.ny);
+    checkError(err, "setting rebound arg 4", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 23, sizeof(cl_float), &params.omega);
+    checkError(err, "setting rebound arg 5", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 24, sizeof(cl_int), &groupsz);
+    checkError(err, "setting rebound arg 4", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 25, sizeof(cl_float), &params.density);
+    checkError(err, "setting rebound arg 6", __LINE__);
+    err = clSetKernelArg(ocl.rebound, 26, sizeof(cl_float), &params.accel);
+    checkError(err, "setting rebound arg 7", __LINE__);
+
+    // Enqueue kernel
+    size_t global[2] = {params.nx, params.ny};
+    size_t local[2] = {WORK_ITEMS, WORK_ITEMS};
+    err = clEnqueueNDRangeKernel(ocl.queue, ocl.rebound,
+                                 2, NULL, global, local, 0, NULL, NULL);
+    checkError(err, "enqueueing rebound kernel", __LINE__);
+
+    // Wait for kernel to finish
+    err = clFinish(ocl.queue);
+    checkError(err, "waiting for rebound kernel", __LINE__);
+
+    err = clEnqueueReadBuffer(
+        ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
+        sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
+    checkError(err, "reading tot_u data", __LINE__);
+
+    float sum = 0.f;
+    for (int i = 0; i < nwork_groups; i++)
+    {
+      sum += tot_u[i];
+    }
+
+    av_vels[tt] = sum / (float)tot_cells;
+
 #ifdef DEBUG
     printf("==timestep: %d==\n", tt);
     printf("av velocity: %.12E\n", av_vels[tt]);
@@ -217,6 +463,65 @@ int main(int argc, char *argv[])
   timstr = ru.ru_stime;
   systim = timstr.tv_sec + (timstr.tv_usec / 1000000.0);
 
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_0, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_0, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_1, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_1, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_2, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_2, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_3, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_3, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_4, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_4, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_5, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_5, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_6, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_6, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_7, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_7, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+  // Read cells from device
+  err = clEnqueueReadBuffer(
+      ocl.queue, ocl.temp_speed_8, CL_TRUE, 0,
+      sizeof(float) * params.nx * params.ny, speed_8, 0, NULL, NULL);
+  checkError(err, "reading cells data", __LINE__);
+
+  for (int i = 0; i < params.nx * params.ny; i++)
+  {
+    cells[i].speeds[0] = speed_0[i];
+    cells[i].speeds[1] = speed_1[i];
+    cells[i].speeds[2] = speed_2[i];
+    cells[i].speeds[3] = speed_3[i];
+    cells[i].speeds[4] = speed_4[i];
+    cells[i].speeds[5] = speed_5[i];
+    cells[i].speeds[6] = speed_6[i];
+    cells[i].speeds[7] = speed_7[i];
+    cells[i].speeds[8] = speed_8[i];
+  }
+
   /* write final values and free memory */
   printf("==done==\n");
   printf("Reynolds number:\t\t%.12E\n", calc_reynolds(params, cells, obstacles, ocl));
@@ -225,150 +530,6 @@ int main(int argc, char *argv[])
   printf("Elapsed system CPU time:\t%.6lf (s)\n", systim);
   write_values(params, cells, obstacles, av_vels);
   finalise(&params, &cells, &tmp_cells, &obstacles, &av_vels, ocl);
-
-  return EXIT_SUCCESS;
-}
-
-int timestep(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl)
-{
-  cl_int err;
-
-  // Write cells to device
-  // err = clEnqueueWriteBuffer(
-  //     ocl.queue, ocl.cells, CL_TRUE, 0,
-  //     sizeof(t_speed) * params.nx * params.ny, cells, 0, NULL, NULL);
-  // checkError(err, "writing cells data", __LINE__);
-
-  // accelerate_flow(params, cells, obstacles, ocl);
-  // propagate(params, cells, tmp_cells, ocl);
-  // rebound(params, cells, tmp_cells, obstacles, ocl);
-  collision(params, cells, tmp_cells, obstacles, ocl);
-
-  // Read cells from device
-  // err = clEnqueueReadBuffer(
-  //     ocl.queue, ocl.cells, CL_TRUE, 0,
-  //     sizeof(t_speed) * params.nx * params.ny, cells, 0, NULL, NULL);
-  // checkError(err, "reading tmp_cells data", __LINE__);
-
-  return EXIT_SUCCESS;
-}
-
-int accelerate_flow(const t_param params, t_speed *cells, int *obstacles, t_ocl ocl)
-{
-  cl_int err;
-
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.accelerate_flow, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting accelerate_flow arg 0", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 1, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting accelerate_flow arg 1", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 2, sizeof(cl_int), &params.nx);
-  checkError(err, "setting accelerate_flow arg 2", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 3, sizeof(cl_int), &params.ny);
-  checkError(err, "setting accelerate_flow arg 3", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 4, sizeof(cl_float), &params.density);
-  checkError(err, "setting accelerate_flow arg 4", __LINE__);
-  err = clSetKernelArg(ocl.accelerate_flow, 5, sizeof(cl_float), &params.accel);
-  checkError(err, "setting accelerate_flow arg 5", __LINE__);
-
-  // Enqueue kernel
-  size_t global[1] = {params.nx};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.accelerate_flow,
-                               1, NULL, global, NULL, 0, NULL, NULL);
-  checkError(err, "enqueueing accelerate_flow kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for accelerate_flow kernel", __LINE__);
-
-  return EXIT_SUCCESS;
-}
-
-int propagate(const t_param params, t_speed *cells, t_speed *tmp_cells, t_ocl ocl)
-{
-  cl_int err;
-
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.propagate, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting propagate arg 0", __LINE__);
-  err = clSetKernelArg(ocl.propagate, 1, sizeof(cl_mem), &ocl.tmp_cells);
-  checkError(err, "setting propagate arg 1", __LINE__);
-  err = clSetKernelArg(ocl.propagate, 2, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting propagate arg 2", __LINE__);
-  err = clSetKernelArg(ocl.propagate, 3, sizeof(cl_int), &params.nx);
-  checkError(err, "setting propagate arg 3", __LINE__);
-  err = clSetKernelArg(ocl.propagate, 4, sizeof(cl_int), &params.ny);
-  checkError(err, "setting propagate arg 4", __LINE__);
-
-  // Enqueue kernel
-  size_t global[2] = {params.nx, params.ny};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.propagate,
-                               2, NULL, global, NULL, 0, NULL, NULL);
-  checkError(err, "enqueueing propagate kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for propagate kernel", __LINE__);
-
-  return EXIT_SUCCESS;
-}
-
-int rebound(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl)
-{
-  cl_int err;
-
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.rebound, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting rebound arg 0", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 1, sizeof(cl_mem), &ocl.tmp_cells);
-  checkError(err, "setting rebound arg 1", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 2, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting rebound arg 2", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 3, sizeof(cl_int), &params.nx);
-  checkError(err, "setting rebound arg 3", __LINE__);
-  err = clSetKernelArg(ocl.rebound, 4, sizeof(cl_int), &params.ny);
-  checkError(err, "setting rebound arg 4", __LINE__);
-
-  // Enqueue kernel
-  size_t global[2] = {params.nx, params.ny};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.rebound,
-                               2, NULL, global, NULL, 0, NULL, NULL);
-  checkError(err, "enqueueing rebound kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for rebound kernel", __LINE__);
-
-  return EXIT_SUCCESS;
-}
-
-int collision(const t_param params, t_speed *cells, t_speed *tmp_cells, int *obstacles, t_ocl ocl)
-{
-  cl_int err;
-
-  // Set kernel arguments
-  err = clSetKernelArg(ocl.collision, 0, sizeof(cl_mem), &ocl.cells);
-  checkError(err, "setting collision arg 0", __LINE__);
-  err = clSetKernelArg(ocl.collision, 1, sizeof(cl_mem), &ocl.tmp_cells);
-  checkError(err, "setting collision arg 1", __LINE__);
-  err = clSetKernelArg(ocl.collision, 2, sizeof(cl_mem), &ocl.obstacles);
-  checkError(err, "setting collision arg 2", __LINE__);
-  err = clSetKernelArg(ocl.collision, 3, sizeof(cl_int), &params.nx);
-  checkError(err, "setting collision arg 3", __LINE__);
-  err = clSetKernelArg(ocl.collision, 4, sizeof(cl_int), &params.ny);
-  checkError(err, "setting collision arg 4", __LINE__);
-  err = clSetKernelArg(ocl.collision, 5, sizeof(cl_float), &params.omega);
-  checkError(err, "setting collision arg 5", __LINE__);
-
-  // Enqueue kernel
-  size_t global[3] = {params.nx, params.ny, params.omega};
-  err = clEnqueueNDRangeKernel(ocl.queue, ocl.collision,
-                               3, NULL, global, NULL, 0, NULL, NULL);
-  checkError(err, "enqueueing collision kernel", __LINE__);
-
-  // Wait for kernel to finish
-  err = clFinish(ocl.queue);
-  checkError(err, "waiting for collision kernel", __LINE__);
 
   return EXIT_SUCCESS;
 }
@@ -632,28 +793,94 @@ int initialise(const char *paramfile, const char *obstaclefile,
   checkError(err, "building program", __LINE__);
 
   // Create OpenCL kernels
-  ocl->accelerate_flow = clCreateKernel(ocl->program, "accelerate_flow", &err);
-  checkError(err, "creating accelerate_flow kernel", __LINE__);
-  ocl->propagate = clCreateKernel(ocl->program, "propagate", &err);
-  checkError(err, "creating propagate kernel", __LINE__);
   ocl->rebound = clCreateKernel(ocl->program, "rebound", &err);
   checkError(err, "creating rebound kernel", __LINE__);
-  ocl->collision = clCreateKernel(ocl->program, "collision", &err);
-  checkError(err, "creating collision kernel", __LINE__);
 
   // Allocate OpenCL buffers
-  ocl->cells = clCreateBuffer(
+  ocl->speed_0 = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(t_speed) * params->nx * params->ny, NULL, &err);
+      sizeof(float) * params->nx * params->ny, NULL, &err);
   checkError(err, "creating cells buffer", __LINE__);
-  ocl->tmp_cells = clCreateBuffer(
+  ocl->speed_1 = clCreateBuffer(
       ocl->context, CL_MEM_READ_WRITE,
-      sizeof(t_speed) * params->nx * params->ny, NULL, &err);
-  checkError(err, "creating tmp_cells buffer", __LINE__);
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_2 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_3 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_4 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_5 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_6 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_7 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->speed_8 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+
+  ocl->temp_speed_0 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_1 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_2 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_3 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_4 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_5 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_6 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_7 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+  ocl->temp_speed_8 = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * params->nx * params->ny, NULL, &err);
+  checkError(err, "creating cells buffer", __LINE__);
+
   ocl->obstacles = clCreateBuffer(
       ocl->context, CL_MEM_READ_ONLY,
       sizeof(cl_int) * params->nx * params->ny, NULL, &err);
   checkError(err, "creating obstacles buffer", __LINE__);
+
+  int nwork_groups = (params->nx / WORK_ITEMS) * (params->ny / WORK_ITEMS);
+  ocl->d_partial_sums = clCreateBuffer(
+      ocl->context, CL_MEM_READ_WRITE,
+      sizeof(float) * nwork_groups, NULL, &err);
+  checkError(err, "creating tot_u buffer", __LINE__);
 
   return EXIT_SUCCESS;
 }
@@ -676,11 +903,28 @@ int finalise(const t_param *params, t_speed **cells_ptr, t_speed **tmp_cells_ptr
   free(*av_vels_ptr);
   *av_vels_ptr = NULL;
 
-  clReleaseMemObject(ocl.cells);
-  clReleaseMemObject(ocl.tmp_cells);
+  clReleaseMemObject(ocl.speed_0);
+  clReleaseMemObject(ocl.speed_1);
+  clReleaseMemObject(ocl.speed_2);
+  clReleaseMemObject(ocl.speed_3);
+  clReleaseMemObject(ocl.speed_4);
+  clReleaseMemObject(ocl.speed_5);
+  clReleaseMemObject(ocl.speed_6);
+  clReleaseMemObject(ocl.speed_7);
+  clReleaseMemObject(ocl.speed_8);
+
+  clReleaseMemObject(ocl.temp_speed_0);
+  clReleaseMemObject(ocl.temp_speed_1);
+  clReleaseMemObject(ocl.temp_speed_2);
+  clReleaseMemObject(ocl.temp_speed_3);
+  clReleaseMemObject(ocl.temp_speed_4);
+  clReleaseMemObject(ocl.temp_speed_5);
+  clReleaseMemObject(ocl.temp_speed_6);
+  clReleaseMemObject(ocl.temp_speed_7);
+  clReleaseMemObject(ocl.temp_speed_8);
+
   clReleaseMemObject(ocl.obstacles);
-  clReleaseKernel(ocl.accelerate_flow);
-  clReleaseKernel(ocl.propagate);
+  clReleaseKernel(ocl.rebound);
   clReleaseProgram(ocl.program);
   clReleaseCommandQueue(ocl.queue);
   clReleaseContext(ocl.context);

@@ -48,16 +48,15 @@ kernel void rebound(global t_speed* cells,
   int y_s = (jj == 0) ? (jj + ny - 1) : (jj - 1);
   int x_w = (ii == 0) ? (ii + nx - 1) : (ii - 1);
 
-float Awrk[NSPEEDS];
-  Awrk[0] = cells[ii + jj*nx].speeds[0];
-  Awrk[1] = cells[x_w + jj*nx].speeds[1];
-  Awrk[2] = cells[ii + y_s*nx].speeds[2];
-  Awrk[3] = cells[x_e + jj*nx].speeds[3];
-  Awrk[4] = cells[ii + y_n*nx].speeds[4];
-  Awrk[5] = cells[x_w + y_s*nx].speeds[5];
-  Awrk[6] = cells[x_e + y_s*nx].speeds[6];
-  Awrk[7] = cells[x_e + y_n*nx].speeds[7];
-  Awrk[8] = cells[x_w + y_n*nx].speeds[8];
+  tmp_cells[ii + jj*nx].speeds[0] = cells[ii + jj*nx].speeds[0]; /* central cell, no movement */
+  tmp_cells[ii + jj*nx].speeds[1] = cells[x_w + jj*nx].speeds[1]; /* east */
+  tmp_cells[ii + jj*nx].speeds[2] = cells[ii + y_s*nx].speeds[2]; /* north */
+  tmp_cells[ii + jj*nx].speeds[3] = cells[x_e + jj*nx].speeds[3]; /* west */
+  tmp_cells[ii + jj*nx].speeds[4] = cells[ii + y_n*nx].speeds[4]; /* south */
+  tmp_cells[ii + jj*nx].speeds[5] = cells[x_w + y_s*nx].speeds[5]; /* north-east */
+  tmp_cells[ii + jj*nx].speeds[6] = cells[x_e + y_s*nx].speeds[6]; /* north-west */
+  tmp_cells[ii + jj*nx].speeds[7] = cells[x_e + y_n*nx].speeds[7]; /* south-west */
+  tmp_cells[ii + jj*nx].speeds[8] = cells[x_w + y_n*nx].speeds[8]; /* south-east */
 
   barrier(CLK_GLOBAL_MEM_FENCE);
 
@@ -65,30 +64,27 @@ float Awrk[NSPEEDS];
   {
     /* called after propagate, so taking values from scratch space
     ** mirroring, and writing into main grid */
-    cells[ii + jj*nx].speeds[1] = Awrk[3];
-    cells[ii + jj*nx].speeds[2] = Awrk[4];
-    cells[ii + jj*nx].speeds[3] = Awrk[1];
-    cells[ii + jj*nx].speeds[4] = Awrk[2];
-    cells[ii + jj*nx].speeds[5] = Awrk[7];
-    cells[ii + jj*nx].speeds[6] = Awrk[8];
-    cells[ii + jj*nx].speeds[7] = Awrk[5];
-    cells[ii + jj*nx].speeds[8] = Awrk[6];
+    cells[ii + jj*nx].speeds[1] = tmp_cells[ii + jj*nx].speeds[3];
+    cells[ii + jj*nx].speeds[2] = tmp_cells[ii + jj*nx].speeds[4];
+    cells[ii + jj*nx].speeds[3] = tmp_cells[ii + jj*nx].speeds[1];
+    cells[ii + jj*nx].speeds[4] = tmp_cells[ii + jj*nx].speeds[2];
+    cells[ii + jj*nx].speeds[5] = tmp_cells[ii + jj*nx].speeds[7];
+    cells[ii + jj*nx].speeds[6] = tmp_cells[ii + jj*nx].speeds[8];
+    cells[ii + jj*nx].speeds[7] = tmp_cells[ii + jj*nx].speeds[5];
+    cells[ii + jj*nx].speeds[8] = tmp_cells[ii + jj*nx].speeds[6];
   } else {
         /* compute local density total */
         float local_density = 0.f;
 
-        /*
-        local_density += Awrk[0]+Awrk[1]+Awrk[2]+Awrk[3]+Awrk[4]+Awrk[5]+Awrk[6]+Awrk[7]+Awrk[8];
-        */
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
-          local_density += Awrk[kk];
+          local_density += tmp_cells[ii + jj * nx].speeds[kk];
         }
 
         /* compute x velocity component */
-        float u_x = (Awrk[1] + Awrk[5] + Awrk[8] - (Awrk[3] + Awrk[6] + Awrk[7])) / local_density;
+        float u_x = (tmp_cells[ii + jj * nx].speeds[1] + tmp_cells[ii + jj * nx].speeds[5] + tmp_cells[ii + jj * nx].speeds[8] - (tmp_cells[ii + jj * nx].speeds[3] + tmp_cells[ii + jj * nx].speeds[6] + tmp_cells[ii + jj * nx].speeds[7])) / local_density;
         /* compute y velocity component */
-        float u_y = (Awrk[2] + Awrk[5] + Awrk[6] - (Awrk[4] + Awrk[7] + Awrk[8])) / local_density;
+        float u_y = (tmp_cells[ii + jj * nx].speeds[2] + tmp_cells[ii + jj * nx].speeds[5] + tmp_cells[ii + jj * nx].speeds[6] - (tmp_cells[ii + jj * nx].speeds[4] + tmp_cells[ii + jj * nx].speeds[7] + tmp_cells[ii + jj * nx].speeds[8])) / local_density;
 
         /* velocity squared */
         float u_sq = u_x * u_x + u_y * u_y;
@@ -119,10 +115,10 @@ float Awrk[NSPEEDS];
         d_equ[7] = w2 * local_density * (1.f + u[7] / c_sq + (u[7] * u[7]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
         d_equ[8] = w2 * local_density * (1.f + u[8] / c_sq + (u[8] * u[8]) / (2.f * c_sq * c_sq) - u_sq / (2.f * c_sq));
 
+        /* relaxation step */
         for (int kk = 0; kk < NSPEEDS; kk++)
         {
-          cells[ii + jj * nx].speeds[kk] = Awrk[kk] + omega * (d_equ[kk] - Awrk[kk]);
+          cells[ii + jj * nx].speeds[kk] = tmp_cells[ii + jj * nx].speeds[kk] + omega * (d_equ[kk] - tmp_cells[ii + jj * nx].speeds[kk]);
         }
   }
-  barrier(CLK_GLOBAL_MEM_FENCE);
 }
