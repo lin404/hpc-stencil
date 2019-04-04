@@ -435,16 +435,16 @@ int main(int argc, char *argv[])
     err = clFinish(ocl.queue);
     checkError(err, "waiting for rebound kernel", __LINE__);
 
-    // err = clEnqueueReadBuffer(
-    //     ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
-    //     sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
-    // checkError(err, "reading tot_u data", __LINE__);
+    err = clEnqueueReadBuffer(
+        ocl.queue, ocl.d_partial_sums, CL_TRUE, 0,
+        sizeof(float) * nwork_groups, tot_u, 0, NULL, NULL);
+    checkError(err, "reading tot_u data", __LINE__);
 
     float sum = 0.f;
-    // for (int i = 0; i < nwork_groups; i++)
-    // {
-    //   sum += tot_u[i];
-    // }
+    for (int i = 0; i < nwork_groups; i++)
+    {
+      sum += tot_u[i];
+    }
 
     av_vels[tt] = sum / (float)tot_cells;
 
